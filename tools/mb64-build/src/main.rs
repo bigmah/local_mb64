@@ -1,9 +1,20 @@
 //! Build orchestrator for the Mario Builder 64 macOS native port.
 //!
-//! The port is a multi-stage pipeline (build the decomp ROM/ELF → statically
-//! recompile with N64Recomp → build the native macOS app). This CLI exists to
-//! make that brittle sequence reproducible. Today it implements `doctor` (verify
-//! the environment) and stubs the pipeline stages that follow.
+//! The port is a multi-stage pipeline. This CLI makes that brittle sequence
+//! reproducible from a fresh clone + a user-supplied US SM64 ROM:
+//!
+//!   build-rom   decomp (make) -> build/rom/mb64.{elf,z64}
+//!   recompile   N64Recomp + post-process + RSPRecomp -> app/RecompiledFuncs + app/rsp
+//!   build-app   cmake (Ninja) + the N64ModernRuntime patch -> app/build/mario_builder_64
+//!   all         the three above, in order
+//!   play        launch the built game
+//!   doctor      verify the environment
+//!
+//! Local modifications to pinned submodules / generated code live as patch files
+//! under `patches/` and are applied here (so a fresh checkout stays buildable):
+//!   patches/Mario-Builder-64-*.patch   -> applied to the decomp before `make`
+//!   patches/recompiled-*.patch         -> applied to the recompiled C after N64Recomp
+//!   patches/N64ModernRuntime-*.patch   -> applied to the runtime submodule before cmake
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
@@ -12,7 +23,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// SHA-1 of the only ROM we support extracting from: US Super Mario 64 (`.z64`).
+/// SHA-1 of the only base ROM we support extracting from: US Super Mario 64 (`.z64`).
 const US_ROM_SHA1: &str = "9bef1128717f958171a4afac3ed78ee2bb4e86ce";
 
 /// MIPS cross-compiler prefixes the MB64 Makefile will accept, best first.
@@ -24,6 +35,11 @@ const MIPS_PREFIXES: &[&str] = &[
     "mips64-linux-gnu-",
     "mips64-none-elf-",
 ];
+
+/// GNU make 4.x shimmed into PATH (Apple's bundled make 3.81 misparses the decomp Makefile).
+const GNU_MAKE_GNUBIN: &str = "/opt/homebrew/opt/make/libexec/gnubin";
+/// Homebrew prefix (SDL2 etc.) handed to CMake.
+const HOMEBREW_PREFIX: &str = "/opt/homebrew";
 
 #[derive(Parser)]
 #[command(
@@ -40,42 +56,318 @@ struct Cli {
 enum Cmd {
     /// Check that the toolchain, dependencies, and ROM are ready.
     Doctor,
-    /// (planned) Build mb64.us.elf + mb64.us.z64 from the vendored decomp.
+    /// Build mb64.us.elf + mb64.us.z64 from the vendored decomp (needs a MIPS toolchain).
     BuildRom,
-    /// (planned) Statically recompile mb64.us.elf with N64Recomp.
+    /// Statically recompile mb64.us.elf with N64Recomp (+ post-process + audio ucode).
     Recompile,
-    /// (planned) Configure + build the native macOS .app.
+    /// Configure + build the native macOS app with CMake/Ninja.
     BuildApp,
+    /// Run the whole pipeline: build-rom -> recompile -> build-app.
+    All,
+    /// Launch the built game.
+    Play,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::Doctor => doctor(),
-        Cmd::BuildRom => not_yet("build-rom", &[
-            "locate vendor/Mario-Builder-64 + your baserom.us.z64",
-            "run `make VERSION=us GRUCODE=f3dex2` with a native MIPS toolchain",
-            "collect build/us/mb64.us.elf and build/us/mb64.us.z64",
-        ]),
-        Cmd::Recompile => not_yet("recompile", &[
-            "emit recomp/mb64.us.toml (entrypoint, sections, overlays, symbols)",
-            "run N64Recomp + RSPRecomp (audio ucode)",
-            "iterate manual_funcs/function_sizes until no functions are dropped",
-        ]),
-        Cmd::BuildApp => not_yet("build-app", &[
-            "configure CMake with -DCMAKE_POLICY_VERSION_MINIMUM=3.5 (CMake 4 compat)",
-            "link RecompiledFuncs + librecomp + ultramodern + rt64 (Metal)",
-            "produce MarioBuilder64.app",
-        ]),
+        Cmd::BuildRom => build_rom(&Ctx::discover()?),
+        Cmd::Recompile => recompile(&Ctx::discover()?),
+        Cmd::BuildApp => build_app(&Ctx::discover()?),
+        Cmd::All => {
+            let c = Ctx::discover()?;
+            build_rom(&c)?;
+            recompile(&c)?;
+            build_app(&c)?;
+            println!("\n✅ pipeline complete — run `mb64-build play`");
+            Ok(())
+        }
+        Cmd::Play => play(&Ctx::discover()?),
     }
 }
 
-fn not_yet(stage: &str, steps: &[&str]) -> Result<()> {
-    println!("`{stage}` is not implemented yet. Planned steps:");
-    for (i, s) in steps.iter().enumerate() {
-        println!("  {}. {s}", i + 1);
+// ── pipeline context ───────────────────────────────────────────────────────────
+
+struct Ctx {
+    root: PathBuf,
+    jobs: usize,
+}
+
+impl Ctx {
+    fn discover() -> Result<Self> {
+        let root = find_project_root().context("could not locate the project root")?;
+        let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        Ok(Ctx { root, jobs })
+    }
+    fn app(&self) -> PathBuf {
+        self.root.join("app")
+    }
+    fn decomp(&self) -> PathBuf {
+        self.root.join("vendor/Mario-Builder-64")
+    }
+    fn rom_out(&self) -> PathBuf {
+        self.root.join("build/rom")
+    }
+}
+
+// ── stage: build-rom ───────────────────────────────────────────────────────────
+
+fn build_rom(c: &Ctx) -> Result<()> {
+    banner("build-rom", "decomp → build/rom/mb64.{elf,z64}");
+
+    let baserom = c.root.join("baserom.us.z64");
+    if !baserom.is_file() {
+        bail!(
+            "baserom.us.z64 not found at {} — drop your legally-owned US SM64 ROM there",
+            baserom.display()
+        );
+    }
+    verify_us_rom(&baserom)?;
+
+    let decomp = c.decomp();
+    if !decomp.join("Makefile").is_file() {
+        bail!("decomp source missing — run: git submodule update --init --recursive");
+    }
+    // The decomp's own build reads ./baserom.us.z64; mirror ours in.
+    let inner = decomp.join("baserom.us.z64");
+    if !inner.exists() {
+        fs::copy(&baserom, &inner).with_context(|| "placing baserom into the decomp tree")?;
+    }
+
+    let mips = find_mips_prefix().ok_or_else(|| {
+        anyhow::anyhow!(
+            "no MIPS cross-compiler on PATH (need e.g. `mips64-elf-gcc`).\n  \
+             install: brew install make coreutils && brew install tehzz/n64-dev/mips64-elf-gcc"
+        )
+    })?;
+    println!("  MIPS toolchain: {mips}gcc");
+
+    // Local decomp patches (e.g. the GCC IPA-clone CFLAGS fix) must be applied first.
+    apply_patches(c, &decomp, "Mario-Builder-64")?;
+
+    // GNU make 4.x must shadow Apple make; unset LIBRARY_PATH (breaks the host-tool link).
+    let mut path = String::new();
+    if Path::new(GNU_MAKE_GNUBIN).is_dir() {
+        let _ = write!(path, "{GNU_MAKE_GNUBIN}:");
+    }
+    path.push_str(&std::env::var("PATH").unwrap_or_default());
+
+    run(
+        Command::new("make")
+            .current_dir(&decomp)
+            .env("PATH", &path)
+            .env_remove("LIBRARY_PATH")
+            .args(["VERSION=us", "COMPILER=gcc", &format!("-j{}", c.jobs)]),
+        "make (decomp)",
+    )?;
+
+    let out = decomp.join("build/us_n64");
+    let rom_out = c.rom_out();
+    fs::create_dir_all(&rom_out)?;
+    for f in ["mb64.elf", "mb64.z64"] {
+        let src = out.join(f);
+        if !src.is_file() {
+            bail!("expected decomp output {} was not produced", src.display());
+        }
+        fs::copy(&src, rom_out.join(f)).with_context(|| format!("staging {f}"))?;
+    }
+    println!("  ✅ staged build/rom/mb64.elf + mb64.z64");
+    Ok(())
+}
+
+// ── stage: recompile ───────────────────────────────────────────────────────────
+
+fn recompile(c: &Ctx) -> Result<()> {
+    banner("recompile", "N64Recomp → post-process → RSPRecomp");
+
+    let rom_out = c.rom_out();
+    let elf = rom_out.join("mb64.elf");
+    if !elf.is_file() {
+        bail!("{} missing — run `mb64-build build-rom` first", elf.display());
+    }
+
+    // N64Recomp reads its config + mb64.elf from its working dir and writes RecompiledFuncs/.
+    let cfg = c.root.join("recomp/mb64.us.toml");
+    fs::copy(&cfg, rom_out.join("mb64.us.toml")).with_context(|| "staging recomp config")?;
+    let n64recomp = c.root.join("tools/bin/N64Recomp");
+    run(
+        Command::new(&n64recomp).current_dir(&rom_out).arg("mb64.us.toml"),
+        "N64Recomp",
+    )?;
+
+    let funcs = rom_out.join("RecompiledFuncs");
+    // macOS libc-collision renames the recompiler doesn't already handle.
+    postprocess_renames(&funcs)?;
+    // Insert scheduler-preemption checks at loop back-edges (globs RecompiledFuncs/*.c in CWD).
+    run(
+        Command::new("python3")
+            .current_dir(&rom_out)
+            .arg(c.root.join("tools/insert_preempt.py")),
+        "insert_preempt.py",
+    )?;
+    // Any captured hand-edits to generated functions (input / sdcard / detect_emulator).
+    apply_patches(c, &rom_out, "recompiled")?;
+
+    // Audio microcode -> app/rsp/aspMain.cpp (RSPRecomp reads app/aspMain.us.toml in app/).
+    let rsprecomp = c.root.join("tools/bin/RSPRecomp");
+    run(
+        Command::new(&rsprecomp).current_dir(c.app()).arg("aspMain.us.toml"),
+        "RSPRecomp (audio ucode)",
+    )?;
+
+    // Stage the recompiled C into the app.
+    stage_dir(&funcs, &c.app().join("RecompiledFuncs"))?;
+    println!("  ✅ recompiled C → app/RecompiledFuncs, audio ucode → app/rsp/aspMain.cpp");
+    Ok(())
+}
+
+/// Rename recompiled symbols that collide with the macOS C library.
+fn postprocess_renames(funcs: &Path) -> Result<()> {
+    const RENAMES: &[(&str, &str)] = &[
+        ("__fpclassifyf", "mb64_fpclassifyf"),
+        ("strncpy", "mb64_strncpy"),
+    ];
+    if !funcs.is_dir() {
+        bail!("N64Recomp produced no {} directory", funcs.display());
+    }
+    let mut touched = 0;
+    for entry in fs::read_dir(funcs).with_context(|| format!("reading {}", funcs.display()))? {
+        let path = entry?.path();
+        let is_src = path
+            .extension()
+            .map(|e| e == "c" || e == "h")
+            .unwrap_or(false);
+        if !is_src {
+            continue;
+        }
+        let mut text = fs::read_to_string(&path)?;
+        let mut changed = false;
+        for (from, to) in RENAMES {
+            if text.contains(from) {
+                text = text.replace(from, to);
+                changed = true;
+            }
+        }
+        if changed {
+            fs::write(&path, &text)?;
+            touched += 1;
+        }
+    }
+    println!("  post-process: renamed libc collisions in {touched} file(s)");
+    Ok(())
+}
+
+// ── stage: build-app ───────────────────────────────────────────────────────────
+
+fn build_app(c: &Ctx) -> Result<()> {
+    banner("build-app", "cmake (Ninja) → app/build/mario_builder_64");
+
+    let app = c.app();
+    if !app.join("RecompiledFuncs/funcs.h").is_file() {
+        bail!("app/RecompiledFuncs missing — run `mb64-build recompile` first");
+    }
+    let nmr = app.join("lib/N64ModernRuntime");
+    if !nmr.join("CMakeLists.txt").is_file() {
+        bail!("submodules not initialized — run: git submodule update --init --recursive");
+    }
+    // Re-apply the runtime's scheduler-preemption patch (idempotent).
+    let patch = c.root.join("patches/N64ModernRuntime-preemption.patch");
+    if patch.is_file() {
+        apply_patch_file(&nmr, &patch, "N64ModernRuntime-preemption")?;
+    }
+
+    // CMake 4 dropped policy < 3.5 compat that bundled libs still declare.
+    run(
+        Command::new("cmake").current_dir(&app).args([
+            "-B",
+            "build",
+            "-G",
+            "Ninja",
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
+            &format!("-DCMAKE_PREFIX_PATH={HOMEBREW_PREFIX}"),
+        ]),
+        "cmake configure",
+    )?;
+    run(
+        Command::new("cmake").current_dir(&app).args([
+            "--build",
+            "build",
+            &format!("-j{}", c.jobs),
+            "--target",
+            "mario_builder_64",
+        ]),
+        "cmake build",
+    )?;
+
+    // The game reads its ROM from the working dir; provision the matching one.
+    let z = c.rom_out().join("mb64.z64");
+    if z.is_file() {
+        let _ = fs::copy(&z, app.join("mb64.z64"));
+    }
+    println!("  ✅ built app/build/mario_builder_64");
+    Ok(())
+}
+
+// ── stage: play ────────────────────────────────────────────────────────────────
+
+fn play(c: &Ctx) -> Result<()> {
+    let bin = c.app().join("build/mario_builder_64");
+    if !bin.is_file() {
+        bail!("game not built — run `mb64-build all` (or build-app) first");
+    }
+    println!("launching {}", bin.display());
+    let status = Command::new(&bin)
+        .current_dir(c.app())
+        .status()
+        .with_context(|| "launching the game")?;
+    std::process::exit(status.code().unwrap_or(0));
+}
+
+// ── patch application ──────────────────────────────────────────────────────────
+
+/// Apply every `patches/<prefix>*.patch` to `target` (idempotent).
+fn apply_patches(c: &Ctx, target: &Path, prefix: &str) -> Result<()> {
+    let dir = c.root.join("patches");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut patches: Vec<PathBuf> = fs::read_dir(&dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            name.starts_with(prefix) && name.ends_with(".patch")
+        })
+        .collect();
+    patches.sort();
+    for p in &patches {
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("patch");
+        apply_patch_file(target, p, name)?;
     }
     Ok(())
+}
+
+/// Apply a single patch with `patch -p1`, skipping if already applied.
+fn apply_patch_file(target: &Path, patch: &Path, name: &str) -> Result<()> {
+    // If it reverse-applies cleanly, it is already in place.
+    let already = Command::new("patch")
+        .current_dir(target)
+        .args(["-p1", "-R", "-s", "-f", "--dry-run", "-i"])
+        .arg(patch)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if already {
+        println!("  patch already applied: {name}");
+        return Ok(());
+    }
+    run(
+        Command::new("patch")
+            .current_dir(target)
+            .args(["-p1", "--forward", "-s", "-i"])
+            .arg(patch),
+        &format!("patch {name}"),
+    )
 }
 
 // ── doctor ───────────────────────────────────────────────────────────────────
@@ -109,28 +401,15 @@ fn doctor() -> Result<()> {
     println!("project root: {}\n", root.display());
 
     let mut checks: Vec<Check> = Vec::new();
-
-    // Host compilers (used for the recompiled C and the C++ runtime/renderer).
     checks.push(check_tool("clang", "C compiler (recompiled output + N64Recomp)"));
     checks.push(check_tool("clang++", "C++ compiler (RT64 / runtime)"));
-
-    // CMake — flag the 4.x compatibility gotcha we already hit.
     checks.push(check_cmake());
     checks.push(check_tool("ninja", "build driver for the C++ app"));
-
-    // SDL2 (windowing/input for the runtime) via pkg-config.
     checks.push(check_sdl2());
-
-    // The MIPS cross-compiler for the decomp build (native, no Docker).
     checks.push(check_mips_toolchain());
-
-    // Vendored game source.
     checks.push(check_submodule(&root));
-
-    // The user's ROM.
     checks.push(check_rom(&root));
 
-    // Render.
     let mut out = String::new();
     for c in &checks {
         let _ = writeln!(out, "  {} {:<26} {}", c.level.glyph(), c.name, c.detail);
@@ -156,10 +435,9 @@ fn check_tool(bin: &str, detail: &str) -> Check {
 }
 
 fn check_cmake() -> Check {
-    let Some(v) = first_line(&run("cmake", &["--version"])) else {
+    let Some(v) = first_line(&capture("cmake", &["--version"])) else {
         return Check { level: Level::Fail, name: "cmake".into(), detail: "NOT FOUND (need >= 3.20)".into() };
     };
-    // v looks like "cmake version 4.3.0"
     let ver = v.split_whitespace().last().unwrap_or("").to_string();
     let major = ver.split('.').next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
     if major >= 4 {
@@ -179,7 +457,7 @@ fn check_sdl2() -> Check {
     }
     let ok = Command::new("pkg-config").args(["--exists", "sdl2"]).status().map(|s| s.success()).unwrap_or(false);
     if ok {
-        let ver = first_line(&run("pkg-config", &["--modversion", "sdl2"])).unwrap_or_default();
+        let ver = first_line(&capture("pkg-config", &["--modversion", "sdl2"])).unwrap_or_default();
         Check { level: Level::Ok, name: "sdl2".into(), detail: format!("{ver} (pkg-config)") }
     } else {
         Check { level: Level::Fail, name: "sdl2".into(), detail: "not found — `brew install sdl2`".into() }
@@ -204,7 +482,7 @@ fn check_mips_toolchain() -> Check {
     Check {
         level: Level::Fail,
         name: "mips toolchain".into(),
-        detail: "none — install mips64-elf gcc (crosstool-ng) or mips-linux-gnu-binutils".into(),
+        detail: "none — `brew install tehzz/n64-dev/mips64-elf-gcc` (or crosstool-ng)".into(),
     }
 }
 
@@ -216,13 +494,12 @@ fn check_submodule(root: &Path) -> Check {
         Check {
             level: Level::Fail,
             name: "MB64 source".into(),
-            detail: "missing — `git submodule update --init`".into(),
+            detail: "missing — `git submodule update --init --recursive`".into(),
         }
     }
 }
 
 fn check_rom(root: &Path) -> Check {
-    // Accept the ROM at the project root or inside the decomp tree.
     let candidates = [root.join("baserom.us.z64"), root.join("vendor/Mario-Builder-64/baserom.us.z64")];
     let Some(path) = candidates.iter().find(|p| p.is_file()) else {
         return Check {
@@ -246,6 +523,49 @@ fn check_rom(root: &Path) -> Check {
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+fn banner(stage: &str, desc: &str) {
+    println!("\n\u{2501}\u{2501} {stage} — {desc} \u{2501}\u{2501}");
+}
+
+/// Run a command with inherited stdio (the user sees make/cmake output live).
+fn run(cmd: &mut Command, label: &str) -> Result<()> {
+    println!("  → {label}");
+    let status = cmd.status().with_context(|| format!("spawning: {label}"))?;
+    if !status.success() {
+        bail!("{label} failed (exit {})", status.code().unwrap_or(-1));
+    }
+    Ok(())
+}
+
+fn verify_us_rom(path: &Path) -> Result<()> {
+    let h = sha1_of(path)?;
+    if h != US_ROM_SHA1 {
+        bail!("{} has SHA-1 {h}, not the US SM64 ROM ({US_ROM_SHA1})", path.display());
+    }
+    Ok(())
+}
+
+fn find_mips_prefix() -> Option<String> {
+    MIPS_PREFIXES
+        .iter()
+        .find(|p| on_path(&format!("{p}gcc")))
+        .map(|p| p.to_string())
+}
+
+/// Replace `dst` with a recursive copy of `src`.
+fn stage_dir(src: &Path, dst: &Path) -> Result<()> {
+    if !src.is_dir() {
+        bail!("nothing to stage: {} is not a directory", src.display());
+    }
+    if dst.exists() {
+        fs::remove_dir_all(dst).ok();
+    }
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent).ok();
+    }
+    run(Command::new("cp").arg("-R").arg(src).arg(dst), "stage RecompiledFuncs")
+}
+
 /// Walk up from CWD to the directory that holds `vendor/Mario-Builder-64`.
 fn find_project_root() -> Result<PathBuf> {
     let mut dir = std::env::current_dir()?;
@@ -254,7 +574,6 @@ fn find_project_root() -> Result<PathBuf> {
             return Ok(dir);
         }
         if !dir.pop() {
-            // Fall back to CWD rather than failing hard.
             return std::env::current_dir().map_err(Into::into);
         }
     }
@@ -270,7 +589,7 @@ fn on_path(bin: &str) -> bool {
 }
 
 /// Run a command, returning combined stdout+stderr (empty on failure to spawn).
-fn run(bin: &str, args: &[&str]) -> String {
+fn capture(bin: &str, args: &[&str]) -> String {
     match Command::new(bin).args(args).output() {
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
