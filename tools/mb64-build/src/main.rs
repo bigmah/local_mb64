@@ -66,6 +66,8 @@ enum Cmd {
     All,
     /// Launch the built game.
     Play,
+    /// Install the MIPS toolchain + GNU make via Homebrew (one-time, ~30 min).
+    InstallToolchain,
 }
 
 fn main() -> Result<()> {
@@ -84,7 +86,38 @@ fn main() -> Result<()> {
             Ok(())
         }
         Cmd::Play => play(&Ctx::discover()?),
+        Cmd::InstallToolchain => install_toolchain(),
     }
+}
+
+// ── install-toolchain ──────────────────────────────────────────────────────────
+
+fn install_toolchain() -> Result<()> {
+    banner("install-toolchain", "Homebrew: GNU make + mips64-elf GCC");
+    if !on_path("brew") {
+        bail!("Homebrew not found — install it from https://brew.sh, then re-run");
+    }
+    if let Some(p) = find_mips_prefix() {
+        println!("  already installed: {p}gcc — nothing to do");
+        return Ok(());
+    }
+    println!("  installing GNU make + coreutils, then the mips64-elf GCC cross-compiler.");
+    println!("  the cross-GCC builds from source and can take ~30 minutes the first time.\n");
+    run(
+        Command::new("brew").args(["install", "make", "coreutils"]),
+        "brew install make coreutils",
+    )?;
+    run(
+        Command::new("brew").args(["install", "tehzz/n64-dev/mips64-elf-gcc"]),
+        "brew install tehzz/n64-dev/mips64-elf-gcc",
+    )?;
+    match find_mips_prefix() {
+        Some(p) => println!("\n✅ MIPS toolchain ready: {p}gcc"),
+        None => println!(
+            "\n⚠ installed, but no mips*-gcc is on PATH yet — open a new shell (or add the brew bin to PATH) and re-run `mb64-build doctor`."
+        ),
+    }
+    Ok(())
 }
 
 // ── pipeline context ───────────────────────────────────────────────────────────
@@ -138,7 +171,7 @@ fn build_rom(c: &Ctx) -> Result<()> {
     let mips = find_mips_prefix().ok_or_else(|| {
         anyhow::anyhow!(
             "no MIPS cross-compiler on PATH (need e.g. `mips64-elf-gcc`).\n  \
-             install: brew install make coreutils && brew install tehzz/n64-dev/mips64-elf-gcc"
+             run `mb64-build install-toolchain` to install it via Homebrew"
         )
     })?;
     println!("  MIPS toolchain: {mips}gcc");

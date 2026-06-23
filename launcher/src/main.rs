@@ -110,9 +110,9 @@ fn App() -> Element {
                         }
                         let code = status.code().unwrap_or(-1);
                         build_log.write().push(if code == 0 {
-                            "✅ build complete — press Play.".to_string()
+                            "✅ finished (exit 0).".to_string()
                         } else {
-                            format!("✗ build failed (exit {code}). See the log above.")
+                            format!("✗ failed (exit {code}). See the log above.")
                         });
                         *guard = None;
                         drop(guard);
@@ -128,6 +128,7 @@ fn App() -> Element {
     let running = matches!(game_status(), GameStatus::Running(_));
 
     // Build panel display state.
+    let toolchain_ok = build::toolchain_present();
     let baserom_label = if base_rom_ok() { "Base ROM ✓ — re-select…" } else { "Select base ROM…" };
     let build_label = if building() { "Building…" } else { "Build game" };
     let build_lines = build_log();
@@ -191,7 +192,7 @@ fn App() -> Element {
                 notice.set(Some("Can't find the repo root.".into()));
                 return;
             };
-            match build::start(&repo) {
+            match build::start(&repo, &["all"]) {
                 Ok(b) => {
                     build_log.set(vec![
                         "Starting build — the first run compiles a lot and can take several minutes…".to_string(),
@@ -201,6 +202,28 @@ fn App() -> Element {
                     notice.set(None);
                 }
                 Err(e) => notice.set(Some(format!("Couldn't start the build: {e}"))),
+            }
+        }
+    };
+
+    let on_install_toolchain = {
+        let repo = repo.clone();
+        let build_handle = build_handle.clone();
+        move |_| {
+            let Some(repo) = repo.clone() else {
+                notice.set(Some("Can't find the repo root.".into()));
+                return;
+            };
+            match build::start(&repo, &["install-toolchain"]) {
+                Ok(b) => {
+                    build_log.set(vec![
+                        "Installing the MIPS toolchain via Homebrew — this can take ~30 minutes…".to_string(),
+                    ]);
+                    *build_handle.lock().unwrap() = Some(b);
+                    building.set(true);
+                    notice.set(None);
+                }
+                Err(e) => notice.set(Some(format!("Couldn't start the install: {e}"))),
             }
         }
     };
@@ -286,6 +309,17 @@ fn App() -> Element {
                         disabled: building() || running || !base_rom_ok(),
                         onclick: on_build,
                         "{build_label}"
+                    }
+                }
+                if !toolchain_ok {
+                    div { class: "row",
+                        span { class: "muted", "MIPS toolchain not found — required for the decomp build." }
+                        button {
+                            class: "btn",
+                            disabled: building() || running,
+                            onclick: on_install_toolchain,
+                            "Install toolchain…"
+                        }
                     }
                 }
                 if has_build_log {

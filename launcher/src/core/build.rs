@@ -84,16 +84,39 @@ pub struct Build {
     pub output: Receiver<String>,
 }
 
-/// Spawn `mb64-build all` in the repo, merging stdout+stderr into a line stream.
-/// Uses `cargo run` so a fresh clone needs nothing pre-built.
-pub fn start(repo: &Path) -> Result<Build> {
+/// MIPS cross-compiler prefixes the decomp build accepts (mirrors `mb64-build`).
+const MIPS_PREFIXES: &[&str] = &[
+    "mips64-elf-",
+    "mips-n64-",
+    "mips64-",
+    "mips-linux-gnu-",
+    "mips64-linux-gnu-",
+    "mips64-none-elf-",
+];
+
+/// Is a MIPS cross-`gcc` (needed by the decomp build) on PATH?
+pub fn toolchain_present() -> bool {
+    MIPS_PREFIXES.iter().any(|p| {
+        Command::new("sh")
+            .arg("-c")
+            .arg(format!("command -v {p}gcc"))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    })
+}
+
+/// Spawn `mb64-build <subcmd>` in the repo, merging stdout+stderr into a line
+/// stream. Uses `cargo run` so a fresh clone needs nothing pre-built.
+pub fn start(repo: &Path, subcmd: &[&str]) -> Result<Build> {
     let mut child = Command::new("cargo")
         .current_dir(repo)
-        .args(["run", "--quiet", "-p", "mb64-build", "--", "all"])
+        .args(["run", "--quiet", "-p", "mb64-build", "--"])
+        .args(subcmd)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| "spawning `cargo run -p mb64-build -- all`")?;
+        .with_context(|| "spawning `cargo run -p mb64-build`")?;
 
     let (tx, rx) = mpsc::channel::<String>();
     if let Some(out) = child.stdout.take() {
