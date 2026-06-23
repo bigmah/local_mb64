@@ -199,6 +199,9 @@ fn recompile(c: &Ctx) -> Result<()> {
     let funcs = rom_out.join("RecompiledFuncs");
     // macOS libc-collision renames the recompiler doesn't already handle.
     postprocess_renames(&funcs)?;
+    // Re-apply hand-edits to generated functions (input / SD card) as name-keyed
+    // overrides — regen-stable, since N64Recomp's function→file layout shifts.
+    apply_overrides(&funcs, &c.root.join("patches/recompiled-overrides"))?;
     // Insert scheduler-preemption checks at loop back-edges (globs RecompiledFuncs/*.c in CWD).
     run(
         Command::new("python3")
@@ -206,7 +209,7 @@ fn recompile(c: &Ctx) -> Result<()> {
             .arg(c.root.join("tools/insert_preempt.py")),
         "insert_preempt.py",
     )?;
-    // Any captured hand-edits to generated functions (input / sdcard / detect_emulator).
+    // Any additional captured line-patches to the recompiled C.
     apply_patches(c, &rom_out, "recompiled")?;
 
     // Audio microcode -> app/rsp/aspMain.cpp (RSPRecomp reads app/aspMain.us.toml in app/).
@@ -256,6 +259,86 @@ fn postprocess_renames(funcs: &Path) -> Result<()> {
     }
     println!("  post-process: renamed libc collisions in {touched} file(s)");
     Ok(())
+}
+
+/// Replace each name-keyed override (`patches/recompiled-overrides/<name>.c`) in the
+/// freshly recompiled C. Matches by function name (ELF-derived, stable), not by file
+/// position — N64Recomp's function→file split shifts between tool versions, so a
+/// file/line patch would not survive a regen.
+fn apply_overrides(funcs: &Path, overrides_dir: &Path) -> Result<()> {
+    if !overrides_dir.is_dir() {
+        return Ok(());
+    }
+    let mut entries: Vec<PathBuf> = fs::read_dir(overrides_dir)?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|e| e == "c").unwrap_or(false))
+        .collect();
+    entries.sort();
+    let mut applied = 0;
+    for op in &entries {
+        let name = op.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+        let body = fs::read_to_string(op)?;
+        if replace_function(funcs, name, &body)? {
+            applied += 1;
+        } else {
+            bail!("override target function `{name}` not found in recompiled output");
+        }
+    }
+    if applied > 0 {
+        println!("  applied {applied} regen-stable function override(s)");
+    }
+    Ok(())
+}
+
+/// The function name in a `RECOMP_FUNC <ret> <name>(...)` definition line, if any.
+fn recomp_func_name(line: &str) -> Option<&str> {
+    if !line.trim_start().starts_with("RECOMP_FUNC ") {
+        return None;
+    }
+    line.split('(').next()?.split_whitespace().last()
+}
+
+/// Find `name` in any `funcs_*.c` under `funcs`, brace-match its body, replace it with
+/// `body`. Returns whether a replacement was made.
+fn replace_function(funcs: &Path, name: &str, body: &str) -> Result<bool> {
+    for entry in fs::read_dir(funcs)? {
+        let path = entry?.path();
+        if path.extension().map(|e| e != "c").unwrap_or(true) {
+            continue;
+        }
+        let text = fs::read_to_string(&path)?;
+        let lines: Vec<&str> = text.lines().collect();
+        let Some(start) = lines.iter().position(|l| recomp_func_name(l) == Some(name)) else {
+            continue;
+        };
+        // Brace-match the function body from its opening line.
+        let (mut depth, mut started, mut end) = (0i32, false, start);
+        for (j, l) in lines.iter().enumerate().skip(start) {
+            depth += l.matches('{').count() as i32 - l.matches('}').count() as i32;
+            started |= l.contains('{');
+            if started && depth == 0 {
+                end = j;
+                break;
+            }
+        }
+        if !started {
+            continue; // a bodyless declaration — keep looking for the definition
+        }
+        let mut out = String::new();
+        for l in &lines[..start] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        out.push_str(body.trim_end());
+        out.push('\n');
+        for l in &lines[end + 1..] {
+            out.push_str(l);
+            out.push('\n');
+        }
+        fs::write(&path, out)?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 // ── stage: build-app ───────────────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+# Name-keyed recompiled-function overrides (regen-stable hand-edits).
+# The orchestrator replaces each function (by name) in fresh N64Recomp output.
+# function	working-file	clean-file	lines
+cart_card_rd_dram	funcs_12.c	funcs_12.c	6
+cart_card_init	funcs_14.c	funcs_13.c	5
+cart_init	funcs_16.c	funcs_16.c	7
+osContGetReadDataEx	funcs_28.c	funcs_28.c	561
+cart_card_wr_dram	funcs_30.c	funcs_29.c	6
