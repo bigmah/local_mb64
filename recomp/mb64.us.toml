@@ -1,0 +1,146 @@
+# First-cut N64Recomp config for Mario Builder 64 (US).
+# Paths are relative to this file's location (build/rom/).
+[input]
+entrypoint = 0x80124330
+elf_path = "mb64.elf"
+output_func_path = "RecompiledFuncs"
+single_file_output = false
+
+[patches]
+# libcart (N64 flashcart/SD hardware) + USB are irrelevant on PC; stub functions
+# whose jump tables N64Recomp can't size. Add more here as the iteration surfaces them.
+ignored = [
+    "ipl3_entry",  # IPL3 boot ROM — N64ModernRuntime handles boot/ROM-load itself
+]
+stubs = [
+    "cart_card_init",
+    "cart_card_rd_cart",
+    "cart_card_rd_dram",
+    "cart_card_wr_cart",
+    "cart_card_wr_dram",
+    "cart_init",
+    "cart_type",
+    "ci_card_init",
+    "ci_card_rd_cart",
+    "ci_card_rd_dram",
+    "ci_card_wr_cart",
+    "ci_card_wr_dram",
+    "ci_init",
+    "ed_card_init",
+    "ed_card_rd_cart",
+    "ed_card_rd_dram",
+    "ed_card_wr_cart",
+    "ed_card_wr_dram",
+    "ed_init",
+]
+
+# Hand-written asm stubs in .main that are NOTYPE/size-0 (entry_point, asserts,
+# rounding-mode helpers, slidec decompressor). Give them sizes so N64Recomp emits them.
+[[input.function_sizes]]
+name = "entry_point"
+size = 0x40
+[[input.function_sizes]]
+name = "__n64Assert"
+size = 0x20
+[[input.function_sizes]]
+name = "roundf"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_get_rounding_mode"
+size = 0xc
+[[input.function_sizes]]
+name = "fcr_set_rounding_mode"
+size = 0x18
+[[input.function_sizes]]
+name = "fcr_get_enabled_exceptions"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_set_enabled_exceptions"
+size = 0x1c
+[[input.function_sizes]]
+name = "fcr_enable_exceptions"
+size = 0x18
+[[input.function_sizes]]
+name = "fcr_disable_exceptions"
+size = 0x1c
+[[input.function_sizes]]
+name = "fcr_get_cause"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_get_flags"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_clear_flags"
+size = 0x1c
+# slidstart is the Yay0 (slidec) decompressor: ONE function spanning
+# 0x80125ee0..0x80125f90 (0xB0). slidemain2/codecheck2/pressdata2/pressloop2/
+# loopend2/pressloop3 are its internal branch labels, NOT separate functions —
+# giving each its own size split the function into broken fragments and left
+# slidstart a setup-only stub that never decompressed (segment 2 + all Yay0
+# assets came out as zeros, crashing RT64 on the first textured draw). Keep this
+# as a single sized function so N64Recomp emits the internal branches as gotos.
+[[input.function_sizes]]
+name = "slidstart"
+size = 0xB0
+
+# GCC-14 `teq $zero,$zero` unreachable-traps (regenerated for current ELF) — nop them.
+[[patches.instruction]]
+func = "act_lvup_dance"
+vram = 0x80196f58
+value = 0x0
+[[patches.instruction]]
+func = "sb_loop"
+vram = 0x801c70c0
+value = 0x0
+[[patches.instruction]]
+func = "dialog_box_set_transform"
+vram = 0x801c71a8
+value = 0x0
+[[patches.instruction]]
+func = "begin_dialog_close"
+vram = 0x801c72c4
+value = 0x0
+[[patches.instruction]]
+func = "unfreeze_page"
+vram = 0x801caf80
+value = 0x0
+[[patches.instruction]]
+func = "page_number_init_text"
+vram = 0x801cb4f8
+value = 0x0
+[[patches.instruction]]
+func = "main_menu_page_change_animate"
+vram = 0x801cc14c
+value = 0x0
+[[patches.instruction]]
+func = "show_message"
+vram = 0x801cd450
+value = 0x0
+[[patches.instruction]]
+func = "pause_menu_loop"
+vram = 0x801ce180
+value = 0x0
+[[patches.instruction]]
+func = "settings_page_closed"
+vram = 0x801cec14
+value = 0x0
+[[patches.instruction]]
+func = "settings_page_main"
+vram = 0x801ced8c
+value = 0x0
+[[patches.instruction]]
+func = "set_toolbar"
+vram = 0x801d0c84
+value = 0x0
+[[patches.instruction]]
+func = "component_toolbar_loop"
+vram = 0x801d147c
+value = 0x0
+[[patches.instruction]]
+func = "toolbar_set_active"
+vram = 0x801d15c0
+value = 0x0
+[[patches.instruction]]
+func = "toolbox_select_button"
+vram = 0x801d18b4
+value = 0x0

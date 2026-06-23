@@ -1,0 +1,115 @@
+diff --git a/librecomp/src/ultra_translation.cpp b/librecomp/src/ultra_translation.cpp
+index e0d367e..545cf69 100644
+--- a/librecomp/src/ultra_translation.cpp
++++ b/librecomp/src/ultra_translation.cpp
+@@ -123,11 +123,14 @@ extern "C" void osSetIntMask_recomp(uint8_t * rdram, recomp_context * ctx) {
+ }
+ 
+ extern "C" void __osDisableInt_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ;
++    // Track critical-section depth so recomp_preempt() won't yield inside one.
++    recomp_interrupts_disabled++;
+ }
+ 
+ extern "C" void __osRestoreInt_recomp(uint8_t * rdram, recomp_context * ctx) {
+-    ;
++    if (recomp_interrupts_disabled > 0) {
++        recomp_interrupts_disabled--;
++    }
+ }
+ 
+ extern "C" void __osSetFpcCsr_recomp(uint8_t * rdram, recomp_context * ctx) {
+diff --git a/ultramodern/include/ultramodern/ultramodern.hpp b/ultramodern/include/ultramodern/ultramodern.hpp
+index db45ee4..85f77d8 100644
+--- a/ultramodern/include/ultramodern/ultramodern.hpp
++++ b/ultramodern/include/ultramodern/ultramodern.hpp
+@@ -57,6 +57,8 @@ void wait_for_external_message_timed(RDRAM_ARG1, u32 millis);
+ 
+ // Thread scheduling.
+ void check_running_queue(RDRAM_ARG1);
++// Starts the 1ms preemption timer that drives recomp_preempt() (breaks busy-waits).
++void start_preemption_timer();
+ void run_next_thread_and_wait(RDRAM_ARG1);
+ void resume_thread_and_wait(RDRAM_ARG OSThread* t);
+ void schedule_running_thread(RDRAM_ARG PTR(OSThread) t);
+diff --git a/ultramodern/src/scheduling.cpp b/ultramodern/src/scheduling.cpp
+index a22f747..f0a0bbf 100644
+--- a/ultramodern/src/scheduling.cpp
++++ b/ultramodern/src/scheduling.cpp
+@@ -1,5 +1,64 @@
++#include <thread>
++#include <atomic>
++#include <chrono>
++
+ #include "ultramodern/ultramodern.hpp"
+ 
++// Defined in mesgqueue.cpp: drains messages osSendMesg'd from native (non-game)
++// threads (VI/SP/DP/etc.) into their target queues, waking any blocked game
++// thread. Normally only run when a game thread hits osSendMesg/osRecvMesg — a
++// busy-spinning thread never would, so recomp_preempt() must run it explicitly.
++void dequeue_external_messages(RDRAM_ARG1);
++
++// ── Cooperative-scheduler preemption for busy-wait loops ──────────────────────
++// Some games (notably SM64) busy-spin in loops that expect hardware priority
++// preemption to let a higher-priority thread make progress — e.g.
++// wait_for_audio_frames() spins until the audio thread advances a counter. The
++// recomp scheduler is cooperative (it only switches threads at syscalls), so a
++// pure busy-spin would deadlock the lower-priority spinner against the
++// higher-priority thread it's waiting on. To emulate preemption, a 1ms timer sets
++// `recomp_should_preempt`; the recompiled code checks it at loop back-edges and
++// calls recomp_preempt(), which yields to any higher-priority runnable thread.
++// The per-loop cost is a single volatile read; an actual yield happens ~1×/ms.
++extern "C" {
++volatile int recomp_should_preempt = 0;
++// Nonzero while the game is in an osDisableInt/osRestoreInt critical section.
++// We emulate INVOLUNTARY (timer) preemption, which hardware also suppresses while
++// interrupts are masked, so recomp_preempt() must not yield while this is set.
++// (Maintained by __osDisableInt_recomp/__osRestoreInt_recomp.) Only touched by
++// the active (cooperative) green thread, so it needs no volatile/atomic.
++int recomp_interrupts_disabled = 0;
++}
++
++extern "C" void recomp_preempt(uint8_t* rdram) {
++    if (recomp_interrupts_disabled) {
++        return; // in a critical section; re-checked at the next loop edge
++    }
++    recomp_should_preempt = 0;
++    // Deliver any messages queued by native threads (e.g. the VI thread's retrace
++    // message that wakes the main/audio threads), then yield to a now-runnable
++    // higher-priority thread. Without the drain, a busy-spinner would never see
++    // those messages and the threads it's waiting on would stay blocked forever.
++    dequeue_external_messages(PASS_RDRAM1);
++    ultramodern::check_running_queue(PASS_RDRAM1);
++}
++
++void ultramodern::start_preemption_timer() {
++    static std::atomic_bool started{false};
++    bool expected = false;
++    if (!started.compare_exchange_strong(expected, true)) {
++        return; // already running
++    }
++    std::thread([]() {
++        ultramodern::set_native_thread_name("Preemption Timer");
++        using namespace std::chrono_literals;
++        while (true) {
++            std::this_thread::sleep_for(1ms);
++            recomp_should_preempt = 1;
++        }
++    }).detach();
++}
++
+ void ultramodern::schedule_running_thread(RDRAM_ARG PTR(OSThread) t_) {
+     debug_printf("[Scheduling] Adding thread %d to the running queue\n", TO_PTR(OSThread, t_)->id);
+     thread_queue_insert(PASS_RDRAM running_queue, t_);
+diff --git a/ultramodern/src/ultrainit.cpp b/ultramodern/src/ultrainit.cpp
+index ca1556c..4a41745 100644
+--- a/ultramodern/src/ultrainit.cpp
++++ b/ultramodern/src/ultrainit.cpp
+@@ -27,6 +27,7 @@ void ultramodern::preinit(RDRAM_ARG ultramodern::renderer::WindowHandle window_h
+     ultramodern::init_timers(PASS_RDRAM1);
+     ultramodern::init_audio();
+     ultramodern::init_thread_cleanup();
++    ultramodern::start_preemption_timer();
+ }
+ 
+ extern "C" void osInitialize() {

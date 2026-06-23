@@ -1,0 +1,28 @@
+[submodule "vendor/Mario-Builder-64"]
+	path = vendor/Mario-Builder-64
+	url = https://github.com/arthurtilly/Mario-Builder-64.git
+	branch = maker-dev
+[submodule "app/lib/concurrentqueue"]
+	path = app/lib/concurrentqueue
+	url = https://github.com/cameron314/concurrentqueue.git
+[submodule "app/lib/GamepadMotionHelpers"]
+	path = app/lib/GamepadMotionHelpers
+	url = https://github.com/JibbSmart/GamepadMotionHelpers.git
+[submodule "app/lib/sse2neon"]
+	path = app/lib/sse2neon
+	url = https://github.com/DLTcollab/sse2neon.git
+[submodule "app/lib/lunasvg"]
+	path = app/lib/lunasvg
+	url = https://github.com/sammycage/lunasvg.git
+[submodule "app/lib/freetype-windows-binaries"]
+	path = app/lib/freetype-windows-binaries
+	url = https://github.com/ubawurinna/freetype-windows-binaries.git
+[submodule "app/lib/RmlUi"]
+	path = app/lib/RmlUi
+	url = https://github.com/mikke89/RmlUi.git
+[submodule "app/lib/rt64"]
+	path = app/lib/rt64
+	url = https://github.com/rt64/rt64.git
+[submodule "app/lib/N64ModernRuntime"]
+	path = app/lib/N64ModernRuntime
+	url = https://github.com/N64Recomp/N64ModernRuntime.git

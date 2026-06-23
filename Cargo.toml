@@ -1,0 +1,18 @@
+# Rust workspace for the Mario Builder 64 macOS native port.
+# The game engine + renderer are C/C++ (vendored / submodules); everything WE
+# author is Rust and lives here: the build orchestrator and (later) the Dioxus
+# launcher.
+[workspace]
+resolver = "2"
+members = [
+    "tools/mb64-build",
+    "launcher",   # Dioxus launcher (mb64-launcher): ROM provisioning, settings, Play
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "local"
+
+[profile.release]
+opt-level = 3

@@ -1,0 +1,158 @@
+# First-cut N64Recomp config for Mario Builder 64 (US).
+# Paths are relative to this file's location (build/rom/).
+[input]
+entrypoint = 0x80124330
+elf_path = "mb64.elf"
+output_func_path = "RecompiledFuncs"
+single_file_output = false
+
+[patches]
+# libcart (N64 flashcart/SD hardware) + USB are irrelevant on PC; stub functions
+# whose jump tables N64Recomp can't size. Add more here as the iteration surfaces them.
+ignored = [
+    "ipl3_entry",  # IPL3 boot ROM — N64ModernRuntime handles boot/ROM-load itself
+]
+stubs = [
+    "cart_card_init",
+    "cart_card_rd_cart",
+    "cart_card_rd_dram",
+    "cart_card_wr_cart",
+    "cart_card_wr_dram",
+    "cart_init",
+    "cart_type",
+    "ci_card_init",
+    "ci_card_rd_cart",
+    "ci_card_rd_dram",
+    "ci_card_wr_cart",
+    "ci_card_wr_dram",
+    "ci_init",
+    "ed_card_init",
+    "ed_card_rd_cart",
+    "ed_card_rd_dram",
+    "ed_card_wr_cart",
+    "ed_card_wr_dram",
+    "ed_init",
+]
+
+# Hand-written asm stubs in .main that are NOTYPE/size-0 (entry_point, asserts,
+# rounding-mode helpers, slidec decompressor). Give them sizes so N64Recomp emits them.
+[[input.function_sizes]]
+name = "entry_point"
+size = 0x40
+[[input.function_sizes]]
+name = "__n64Assert"
+size = 0x20
+[[input.function_sizes]]
+name = "roundf"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_get_rounding_mode"
+size = 0xc
+[[input.function_sizes]]
+name = "fcr_set_rounding_mode"
+size = 0x18
+[[input.function_sizes]]
+name = "fcr_get_enabled_exceptions"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_set_enabled_exceptions"
+size = 0x1c
+[[input.function_sizes]]
+name = "fcr_enable_exceptions"
+size = 0x18
+[[input.function_sizes]]
+name = "fcr_disable_exceptions"
+size = 0x1c
+[[input.function_sizes]]
+name = "fcr_get_cause"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_get_flags"
+size = 0x10
+[[input.function_sizes]]
+name = "fcr_clear_flags"
+size = 0x1c
+[[input.function_sizes]]
+name = "slidstart"
+size = 0x20
+[[input.function_sizes]]
+name = "slidemain2"
+size = 0x14
+[[input.function_sizes]]
+name = "codecheck2"
+size = 0x20
+[[input.function_sizes]]
+name = "pressdata2"
+size = 0x1c
+[[input.function_sizes]]
+name = "pressloop2"
+size = 0x18
+[[input.function_sizes]]
+name = "loopend2"
+size = 0x14
+[[input.function_sizes]]
+name = "pressloop3"
+size = 0x14
+
+# GCC-14 `teq $zero,$zero` unreachable-traps (N64Recomp can't recompile traps);
+# nop them — these abort paths don't run in normal play.
+[[patches.instruction]]
+func = "act_lvup_dance"
+vram = 0x80196ef8
+value = 0x0
+[[patches.instruction]]
+func = "sb_loop"
+vram = 0x801c6ec4
+value = 0x0
+[[patches.instruction]]
+func = "dialog_box_set_transform"
+vram = 0x801c6fac
+value = 0x0
+[[patches.instruction]]
+func = "begin_dialog_close"
+vram = 0x801c70c8
+value = 0x0
+[[patches.instruction]]
+func = "unfreeze_page"
+vram = 0x801cad84
+value = 0x0
+[[patches.instruction]]
+func = "page_number_init_text"
+vram = 0x801cb2fc
+value = 0x0
+[[patches.instruction]]
+func = "main_menu_page_change_animate"
+vram = 0x801cbf50
+value = 0x0
+[[patches.instruction]]
+func = "show_message"
+vram = 0x801cd254
+value = 0x0
+[[patches.instruction]]
+func = "pause_menu_loop"
+vram = 0x801cdf84
+value = 0x0
+[[patches.instruction]]
+func = "settings_page_closed"
+vram = 0x801ce860
+value = 0x0
+[[patches.instruction]]
+func = "settings_page_main"
+vram = 0x801ce9d8
+value = 0x0
+[[patches.instruction]]
+func = "set_toolbar"
+vram = 0x801d0a88
+value = 0x0
+[[patches.instruction]]
+func = "component_toolbar_loop"
+vram = 0x801d1280
+value = 0x0
+[[patches.instruction]]
+func = "toolbar_set_active"
+vram = 0x801d13c4
+value = 0x0
+[[patches.instruction]]
+func = "toolbox_select_button"
+vram = 0x801d16b8
+value = 0x0

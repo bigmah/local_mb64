@@ -1,0 +1,44 @@
+# ── ROMs & copyrighted material — NEVER commit these ──────────────────────────
+# You must supply your own legally-owned US Super Mario 64 ROM. We never
+# redistribute Nintendo ROMs or assets extracted from them.
+*.z64
+*.n64
+*.v64
+*.bps
+baserom*.z64
+baserom*
+roms/
+# extracted-asset folders (Nintendo-owned media pulled from your ROM at build time)
+**/assets/**/*.png
+**/assets/**/*.aiff
+**/sound/samples/
+build/
+
+# ── Rust ──────────────────────────────────────────────────────────────────────
+target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# ── N64Recomp / CMake build output ────────────────────────────────────────────
+cmake-build*/
+RecompiledFuncs/
+recomp/RecompiledFuncs/
+*.elf
+*.o
+*.a
+
+# ── Local runtime / save state (generated locally — never source) ─────────────
+*.img
+app/saves/*.bin
+app/saves/*.sav
+app/shadercache/*
+!app/shadercache/.gitkeep
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+*.dSYM/
+
+# ── editors / misc ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.log

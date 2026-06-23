@@ -1,0 +1,35 @@
+diff --git a/src/engine/math_util.c b/src/engine/math_util.c
+index d45c5cc..b0612c3 100755
+--- a/src/engine/math_util.c
++++ b/src/engine/math_util.c
+@@ -123,19 +123,17 @@ skip1:
+         // Math ops are 4 multiplications, 2 additions, 1 division, and 3 LWC1s.
+         // In total, that's 58 cycles and 10 instructions.
+         result = x / y;
+-        f32 z2;
+-
+-        asm("mul.s %0, %1, %1" : "=f"(z2) : "f"(result));
+-        register float item3 asm("f10") = read_float(&ATANSCOEFFICIENTS[0]);
+-        // We put result = x / y here to avoid a division (possibly by y==0) in the branch delay slot.
+-        // This should trick GCC into putting a LWC1 in the delay slot instead.
+-        register float item2 asm("f18") = read_float(&ATANSCOEFFICIENTS[1]);
+-        asm("mul.s %0, %0, %2\n" // item1 = item1 * z2
+-            "add.s %1, %1, %0\n" // item2 = item2 + item1
+-            "mul.s %1, %2, %1"   // item2 = z2 * item2
+-            : "+f"(item1), "+f"(item2)
+-            : "f"(z2));
+-
++        // PORT PATCH (macOS recomp): the original used GCC-only FP-register asm
++        // (`register ... asm("f10"/"f18")` + `mul.s`/`add.s`) purely to match the
++        // N64 ROM's instruction scheduling. clang rejects MIPS FP register names,
++        // and byte-matching is irrelevant for a recompiled port, so use the
++        // equivalent plain C (identical to the formula documented just below).
++        f32 z2 = result * result;
++        f32 item3 = read_float(&ATANSCOEFFICIENTS[0]);
++        f32 item2 = read_float(&ATANSCOEFFICIENTS[1]);
++        item1 = item1 * z2;
++        item2 = item2 + item1;
++        item2 = z2 * item2;
+         item3 = item3 + item2;
+         result = result * item3;
+         // The above lines implement result = z * (ATANSCOEFFICIENTS[0] + z2 * (ATANSCOEFFICIENTS[1] +

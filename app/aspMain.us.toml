@@ -1,0 +1,17 @@
+# RSPRecomp config for Mario Builder 64's audio microcode (standard SM64/SDK
+# aspMain). The ucode text is identical in size (0xE20) to drmario64's, which
+# uses the same SDK aspMain, so the IMEM-relative indirect-branch (jump-table)
+# targets are reused as-is. ROM offsets are for build/rom/mb64.z64:
+#   aspMainText: VMA 0x80141810, ROM 0x1E4E0, size 0xE20
+#   aspMainData: VMA 0x801481F0, ROM 0x24EC0
+# text_address is the RSP IMEM load address (0x04000000 + 0x1080, after rspboot).
+text_offset = 0x1E4E0
+text_size = 0xE20
+text_address = 0x04001080
+rom_file_path = "../build/rom/mb64.z64"
+output_file_path = "rsp/aspMain.cpp"
+output_function_name = "aspMain"
+extra_indirect_branch_targets = [
+    0x1118, 0x1470, 0x11DC, 0x1B38, 0x1214, 0x187C, 0x1254, 0x12D0,
+    0x12EC, 0x1328, 0x140C, 0x1294, 0x1E24, 0x138C, 0x170C, 0x144C,
+]
