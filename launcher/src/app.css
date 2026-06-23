@@ -101,3 +101,10 @@ input:focus { outline: none; border-color: var(--accent); }
   padding: 10px 14px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 11.5px; color: var(--muted);
 }
+
+.buildlog {
+  margin: 12px 0 0; background: #0e1014; border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; max-height: 220px; overflow: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px;
+  line-height: 1.5; color: #c7ccd6; white-space: pre-wrap; word-break: break-word;
+}

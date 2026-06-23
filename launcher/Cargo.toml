@@ -27,6 +27,10 @@ serde_json = "1"
 # replicate that here so the launcher's "valid ROM" verdict matches the game's exactly.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# Base-ROM verification: the decomp extracts assets from exactly the US SM64 ROM,
+# identified by SHA-1 (same check as `mb64-build doctor`).
+sha1 = "0.10"
+
 anyhow = "1"
 
 # Runtime-agnostic timer for the child-process poll loop (works on whatever

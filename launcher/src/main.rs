@@ -12,6 +12,7 @@
 
 mod core;
 
+use crate::core::build::{self, Build};
 use crate::core::game::{self, Preflight};
 use crate::core::paths;
 use crate::core::rom::{self, DataDirRom};
@@ -53,6 +54,16 @@ fn App() -> Element {
     let mut game_status = use_signal(|| GameStatus::Idle);
     let mut notice = use_signal(|| Option::<String>::None);
 
+    // Build-from-base-ROM state.
+    let repo = use_hook(paths::find_repo_root);
+    let mut base_rom_ok = use_signal({
+        let repo = repo.clone();
+        move || repo.as_deref().map(build::baserom_in_place).unwrap_or(false)
+    });
+    let mut building = use_signal(|| false);
+    let mut build_log = use_signal(Vec::<String>::new);
+    let build_handle = use_hook(|| Arc::new(Mutex::new(None::<Build>)));
+
     // Shared handle to the child process. Held across the UI and the poll loop;
     // try_wait() (non-blocking) reaps it without consuming, so the Stop button can
     // still signal it by pid.
@@ -80,9 +91,48 @@ fn App() -> Element {
         });
     }
 
+    // Poll the build child: stream its output into the log, detect completion.
+    {
+        let build_handle = build_handle.clone();
+        use_future(move || {
+            let build_handle = build_handle.clone();
+            async move {
+                loop {
+                    futures_timer::Delay::new(Duration::from_millis(250)).await;
+                    let mut guard = build_handle.lock().unwrap();
+                    let Some(b) = guard.as_mut() else { continue };
+                    while let Ok(line) = b.output.try_recv() {
+                        build_log.write().push(line);
+                    }
+                    if let Ok(Some(status)) = b.child.try_wait() {
+                        while let Ok(line) = b.output.try_recv() {
+                            build_log.write().push(line);
+                        }
+                        let code = status.code().unwrap_or(-1);
+                        build_log.write().push(if code == 0 {
+                            "✅ build complete — press Play.".to_string()
+                        } else {
+                            format!("✗ build failed (exit {code}). See the log above.")
+                        });
+                        *guard = None;
+                        drop(guard);
+                        building.set(false);
+                    }
+                }
+            }
+        });
+    }
+
     let s = settings.read().clone();
     let binary_found = s.game_binary.is_file();
     let running = matches!(game_status(), GameStatus::Running(_));
+
+    // Build panel display state.
+    let baserom_label = if base_rom_ok() { "Base ROM ✓ — re-select…" } else { "Select base ROM…" };
+    let build_label = if building() { "Building…" } else { "Build game" };
+    let build_lines = build_log();
+    let has_build_log = !build_lines.is_empty();
+    let build_tail = build_lines[build_lines.len().saturating_sub(16)..].join("\n");
 
     // ── handlers ──────────────────────────────────────────────────────────────
     let on_pick_rom = move |_| {
@@ -105,6 +155,54 @@ fn App() -> Element {
                 Err(e) => notice.set(Some(format!("ROM not accepted: {e}"))),
             }
         });
+    };
+
+    let on_pick_baserom = {
+        let repo = repo.clone();
+        move |_| {
+            let repo = repo.clone();
+            spawn(async move {
+                let Some(repo) = repo else {
+                    notice.set(Some("Can't find the repo root — run the launcher from inside the repo.".into()));
+                    return;
+                };
+                let picked = rfd::AsyncFileDialog::new()
+                    .add_filter("N64 ROM", &["z64", "n64", "v64"])
+                    .set_title("Select your US Super Mario 64 ROM (base ROM)")
+                    .pick_file()
+                    .await;
+                let Some(file) = picked else { return };
+                match build::place_baserom(file.path(), &repo) {
+                    Ok(()) => {
+                        base_rom_ok.set(true);
+                        notice.set(Some("Base ROM verified ✓ — press “Build game”.".into()));
+                    }
+                    Err(e) => notice.set(Some(format!("Base ROM not accepted: {e}"))),
+                }
+            });
+        }
+    };
+
+    let on_build = {
+        let repo = repo.clone();
+        let build_handle = build_handle.clone();
+        move |_| {
+            let Some(repo) = repo.clone() else {
+                notice.set(Some("Can't find the repo root.".into()));
+                return;
+            };
+            match build::start(&repo) {
+                Ok(b) => {
+                    build_log.set(vec![
+                        "Starting build — the first run compiles a lot and can take several minutes…".to_string(),
+                    ]);
+                    *build_handle.lock().unwrap() = Some(b);
+                    building.set(true);
+                    notice.set(None);
+                }
+                Err(e) => notice.set(Some(format!("Couldn't start the build: {e}"))),
+            }
+        }
     };
 
     let on_play = {
@@ -170,11 +268,36 @@ fn App() -> Element {
                 }
             }
 
-            // ROM provisioning.
+            // Build the game from the base ROM.
             section { class: "panel",
-                h2 { "ROM" }
+                h2 { "Build from your ROM" }
                 p { class: "muted",
-                    "The launcher verifies your Mario Builder 64 ROM against the exact hash the game checks, then places it in the data folder."
+                    "Provide your US Super Mario 64 ROM and the launcher builds the decomp, recompiles it, and compiles the app. The first build needs the MIPS toolchain (mips64-elf-gcc) and can take several minutes."
+                }
+                div { class: "row",
+                    button {
+                        class: "btn",
+                        disabled: building() || running,
+                        onclick: on_pick_baserom,
+                        "{baserom_label}"
+                    }
+                    button {
+                        class: "btn play-btn",
+                        disabled: building() || running || !base_rom_ok(),
+                        onclick: on_build,
+                        "{build_label}"
+                    }
+                }
+                if has_build_log {
+                    pre { class: "buildlog", "{build_tail}" }
+                }
+            }
+
+            // ROM provisioning (advanced: provide an already-built mb64.z64 directly).
+            section { class: "panel",
+                h2 { "ROM (already built)" }
+                p { class: "muted",
+                    "Already have a built Mario Builder 64 ROM? The launcher verifies it against the exact hash the game checks and places it in the data folder."
                 }
                 if let Some(src) = s.rom_source.as_ref() {
                     p { class: "path", "Last selected: {src.display()}" }
@@ -281,7 +404,7 @@ fn App() -> Element {
 
             if !binary_found {
                 div { class: "build-hint",
-                    "Build the game first:  cd app && cmake --build build --target mario_builder_64"
+                    "No game binary yet — use “Build from your ROM” above (CLI equivalent: cargo run -p mb64-build -- all)."
                 }
             }
         }
