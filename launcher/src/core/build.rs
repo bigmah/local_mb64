@@ -94,16 +94,30 @@ const MIPS_PREFIXES: &[&str] = &[
     "mips64-none-elf-",
 ];
 
-/// Is a MIPS cross-`gcc` (needed by the decomp build) on PATH?
+/// `bin` dirs that may hold an off-PATH `mips64-elf-gcc` (mirrors `mb64-build`):
+/// the persistent install, then the legacy `/tmp/n64tc`.
+fn toolchain_bin_dirs() -> Vec<std::path::PathBuf> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    vec![
+        home.join(".mb64/toolchain/bin"),
+        std::path::PathBuf::from("/tmp/n64tc/bin"),
+    ]
+}
+
+/// Is a MIPS cross-`gcc` (needed by the decomp build) available — on PATH, or at one
+/// of the known install locations the orchestrator auto-detects?
 pub fn toolchain_present() -> bool {
-    MIPS_PREFIXES.iter().any(|p| {
+    let on_path = MIPS_PREFIXES.iter().any(|p| {
         Command::new("sh")
             .arg("-c")
             .arg(format!("command -v {p}gcc"))
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
-    })
+    });
+    on_path || toolchain_bin_dirs().iter().any(|d| d.join("mips64-elf-gcc").is_file())
 }
 
 /// Spawn `mb64-build <subcmd>` in the repo, merging stdout+stderr into a line

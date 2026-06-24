@@ -41,6 +41,18 @@ const GNU_MAKE_GNUBIN: &str = "/opt/homebrew/opt/make/libexec/gnubin";
 /// Homebrew prefix (SDL2 etc.) handed to CMake.
 const HOMEBREW_PREFIX: &str = "/opt/homebrew";
 
+/// Cross toolchain versions we build from source. NB: the old `tehzz/n64-dev` tap
+/// (gcc 10.2.0 / binutils 2.37) no longer compiles against the macOS 26 SDK — its
+/// bundled zlib clashes with `_stdio.h`. These newer versions build cleanly with
+/// `--with-system-zlib`.
+const BINUTILS_VER: &str = "2.43";
+const GCC_VER: &str = "14.2.0";
+
+/// Homebrew formulae the build needs: the cross-GCC's math libs + GNU make for the
+/// decomp build, and cmake/ninja/sdl2/pkg-config for the C++ app build.
+const BREW_DEPS: &[&str] =
+    &["make", "coreutils", "gmp", "mpfr", "libmpc", "cmake", "ninja", "sdl2", "pkg-config"];
+
 #[derive(Parser)]
 #[command(
     name = "mb64-build",
@@ -93,31 +105,171 @@ fn main() -> Result<()> {
 // ── install-toolchain ──────────────────────────────────────────────────────────
 
 fn install_toolchain() -> Result<()> {
-    banner("install-toolchain", "Homebrew: GNU make + mips64-elf GCC");
+    banner(
+        "install-toolchain",
+        &format!("mips64-elf binutils {BINUTILS_VER} + gcc {GCC_VER} (from source)"),
+    );
+    let prefix = toolchain_prefix();
+    let mips_gcc = prefix.join("bin/mips64-elf-gcc");
+    if mips_gcc.is_file() {
+        println!("  already installed: {} — nothing to do", mips_gcc.display());
+        return Ok(());
+    }
+
+    // Homebrew supplies the cross-GCC's math libs (gmp/mpfr/libmpc), GNU make, and the
+    // C++ app-build deps. The cross toolchain itself we build from source (the tap is
+    // too old to compile on this macOS — see BINUTILS_VER/GCC_VER).
+    ensure_brew_deps()?;
+
+    println!(
+        "  building the MIPS cross toolchain from source into\n    {}\n  \
+         (one time, ~30–40 min — leave it running).\n",
+        prefix.display()
+    );
+    build_cross_toolchain(&prefix)?;
+
+    if mips_gcc.is_file() {
+        println!(
+            "\n✅ MIPS toolchain ready: {}\n   \
+             the build pipeline auto-detects it — run `mb64-build all` (or hit Build in the launcher).",
+            mips_gcc.display()
+        );
+        Ok(())
+    } else {
+        bail!("toolchain build finished but {} is missing — see the log above", mips_gcc.display());
+    }
+}
+
+/// Ensure the Homebrew build dependencies are installed (idempotent: only installs
+/// the ones that are missing).
+fn ensure_brew_deps() -> Result<()> {
     if !on_path("brew") {
         bail!("Homebrew not found — install it from https://brew.sh, then re-run");
     }
-    if let Some(p) = find_mips_prefix() {
-        println!("  already installed: {p}gcc — nothing to do");
+    let missing: Vec<&str> = BREW_DEPS
+        .iter()
+        .copied()
+        .filter(|f| !Path::new(&format!("{HOMEBREW_PREFIX}/opt/{f}")).exists())
+        .collect();
+    if missing.is_empty() {
+        println!("  Homebrew build deps: all present");
         return Ok(());
     }
-    println!("  installing GNU make + coreutils, then the mips64-elf GCC cross-compiler.");
-    println!("  the cross-GCC builds from source and can take ~30 minutes the first time.\n");
+    println!("  installing Homebrew build deps: {}", missing.join(" "));
+    run(Command::new("brew").arg("install").args(&missing), "brew install build deps")
+}
+
+/// Build `binutils` then `gcc` for the `mips64-elf` target from source, installing
+/// into `prefix`. Mirrors the validated manual recipe: `--with-system-zlib` (the
+/// bundled zlib's headers clash with the macOS 26 SDK), `MAKEINFO=true` (no texinfo
+/// needed), `LIBRARY_PATH` unset (it breaks the host-tool link), and gmp/mpfr/mpc
+/// from Homebrew. The decomp links its own libgcc (`lib/gcclib/`), so libgcc is
+/// best-effort — `install-gcc` alone yields a working cross compiler.
+fn build_cross_toolchain(prefix: &Path) -> Result<()> {
+    let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let work = prefix
+        .parent()
+        .unwrap_or_else(|| Path::new("/tmp"))
+        .join("toolchain-build");
+    fs::create_dir_all(&work).with_context(|| format!("creating {}", work.display()))?;
+
+    // ── binutils ──────────────────────────────────────────────────────────────
+    let bu = format!("binutils-{BINUTILS_VER}");
+    let bu_src = fetch_and_extract(
+        &work,
+        &bu,
+        &format!("https://ftpmirror.gnu.org/binutils/{bu}.tar.xz"),
+    )?;
+    let bu_build = work.join("build-binutils");
+    fs::create_dir_all(&bu_build)?;
     run(
-        Command::new("brew").args(["install", "make", "coreutils"]),
-        "brew install make coreutils",
+        Command::new(bu_src.join("configure"))
+            .current_dir(&bu_build)
+            .env_remove("LIBRARY_PATH")
+            .arg("--target=mips64-elf")
+            .arg(format!("--prefix={}", prefix.display()))
+            .args(["--disable-nls", "--disable-werror", "--disable-gdb", "--with-system-zlib", "--without-zstd"]),
+        "configure binutils",
     )?;
     run(
-        Command::new("brew").args(["install", "tehzz/n64-dev/mips64-elf-gcc"]),
-        "brew install tehzz/n64-dev/mips64-elf-gcc",
+        Command::new("make").current_dir(&bu_build).env_remove("LIBRARY_PATH").arg("MAKEINFO=true").arg(format!("-j{jobs}")),
+        "make binutils",
     )?;
-    match find_mips_prefix() {
-        Some(p) => println!("\n✅ MIPS toolchain ready: {p}gcc"),
-        None => println!(
-            "\n⚠ installed, but no mips*-gcc is on PATH yet — open a new shell (or add the brew bin to PATH) and re-run `mb64-build doctor`."
-        ),
-    }
+    run(
+        Command::new("make").current_dir(&bu_build).env_remove("LIBRARY_PATH").args(["MAKEINFO=true", "install"]),
+        "install binutils",
+    )?;
+
+    // ── gcc ─────────────────────────────────────────────────────────────────────
+    let gcc = format!("gcc-{GCC_VER}");
+    let gcc_src = fetch_and_extract(
+        &work,
+        &gcc,
+        &format!("https://ftpmirror.gnu.org/gcc/{gcc}/{gcc}.tar.xz"),
+    )?;
+    let gcc_build = work.join("build-gcc");
+    fs::create_dir_all(&gcc_build)?;
+    run(
+        Command::new(gcc_src.join("configure"))
+            .current_dir(&gcc_build)
+            .env_remove("LIBRARY_PATH")
+            .arg("--target=mips64-elf")
+            .arg(format!("--prefix={}", prefix.display()))
+            .args([
+                "--enable-languages=c", "--without-headers", "--with-newlib", "--disable-nls",
+                "--disable-shared", "--disable-threads", "--disable-libssp", "--disable-libquadmath",
+                "--disable-libgomp", "--disable-libatomic", "--disable-libstdcxx",
+                "--with-system-zlib", "--without-zstd", "--disable-bootstrap",
+            ])
+            .arg(format!("--with-gmp={HOMEBREW_PREFIX}/opt/gmp"))
+            .arg(format!("--with-mpfr={HOMEBREW_PREFIX}/opt/mpfr"))
+            .arg(format!("--with-mpc={HOMEBREW_PREFIX}/opt/libmpc")),
+        "configure gcc",
+    )?;
+    run(
+        Command::new("make").current_dir(&gcc_build).env_remove("LIBRARY_PATH").arg("MAKEINFO=true").arg(format!("-j{jobs}")).arg("all-gcc"),
+        "make gcc (all-gcc)",
+    )?;
+    run(
+        Command::new("make").current_dir(&gcc_build).env_remove("LIBRARY_PATH").args(["MAKEINFO=true", "install-gcc"]),
+        "install gcc",
+    )?;
+    // libgcc is optional (the decomp ships its own) — don't fail the install on it.
+    let _ = Command::new("make")
+        .current_dir(&gcc_build)
+        .env_remove("LIBRARY_PATH")
+        .arg("MAKEINFO=true")
+        .arg(format!("-j{jobs}"))
+        .arg("all-target-libgcc")
+        .status();
+    let _ = Command::new("make")
+        .current_dir(&gcc_build)
+        .env_remove("LIBRARY_PATH")
+        .args(["MAKEINFO=true", "install-target-libgcc"])
+        .status();
+
+    println!("\n  (build tree left at {} — safe to delete to reclaim space)", work.display());
     Ok(())
+}
+
+/// Download `<url>` into `work` (skipping if present) and extract it, returning the
+/// extracted source dir `work/<name>`.
+fn fetch_and_extract(work: &Path, name: &str, url: &str) -> Result<PathBuf> {
+    let tarball = work.join(format!("{name}.tar.xz"));
+    if !tarball.is_file() {
+        run(
+            Command::new("curl").arg("-fL").arg("-o").arg(&tarball).arg(url),
+            &format!("download {name}"),
+        )?;
+    }
+    let src = work.join(name);
+    if !src.is_dir() {
+        run(
+            Command::new("tar").arg("xf").arg(&tarball).current_dir(work),
+            &format!("extract {name}"),
+        )?;
+    }
+    Ok(src)
 }
 
 // ── pipeline context ───────────────────────────────────────────────────────────
@@ -168,19 +320,28 @@ fn build_rom(c: &Ctx) -> Result<()> {
         fs::copy(&baserom, &inner).with_context(|| "placing baserom into the decomp tree")?;
     }
 
-    let mips = find_mips_prefix().ok_or_else(|| {
-        anyhow::anyhow!(
-            "no MIPS cross-compiler on PATH (need e.g. `mips64-elf-gcc`).\n  \
-             run `mb64-build install-toolchain` to install it via Homebrew"
-        )
-    })?;
+    // Prefer our persistent/legacy install (off PATH); else any cross-gcc on PATH.
+    let tc_bin = installed_toolchain_bin();
+    let mips = match &tc_bin {
+        Some(_) => "mips64-elf-".to_string(),
+        None => find_mips_prefix().ok_or_else(|| {
+            anyhow::anyhow!(
+                "no MIPS cross-compiler found (need e.g. `mips64-elf-gcc`).\n  \
+                 run `mb64-build install-toolchain` (or hit \"Install toolchain\" in the launcher)"
+            )
+        })?,
+    };
     println!("  MIPS toolchain: {mips}gcc");
 
     // Local decomp patches (e.g. the GCC IPA-clone CFLAGS fix) must be applied first.
     apply_patches(c, &decomp, "Mario-Builder-64")?;
 
-    // GNU make 4.x must shadow Apple make; unset LIBRARY_PATH (breaks the host-tool link).
+    // PATH for the decomp build: our toolchain bin (if installed off PATH) + GNU make
+    // 4.x ahead of Apple's; unset LIBRARY_PATH (breaks the host-tool link).
     let mut path = String::new();
+    if let Some(bin) = &tc_bin {
+        let _ = write!(path, "{}:", bin.display());
+    }
     if Path::new(GNU_MAKE_GNUBIN).is_dir() {
         let _ = write!(path, "{GNU_MAKE_GNUBIN}:");
     }
@@ -581,24 +742,35 @@ fn check_sdl2() -> Check {
 }
 
 fn check_mips_toolchain() -> Check {
+    // A complete cross-`gcc` is best, whether on PATH or at a known install location.
     for p in MIPS_PREFIXES {
         let gcc = format!("{p}gcc");
-        let asm = format!("{p}as");
         if on_path(&gcc) {
-            return Check { level: Level::Ok, name: "mips toolchain".into(), detail: format!("{gcc} (gcc)") };
+            return Check { level: Level::Ok, name: "mips toolchain".into(), detail: format!("{gcc} (PATH)") };
         }
+    }
+    if let Some(bin) = installed_toolchain_bin() {
+        return Check {
+            level: Level::Ok,
+            name: "mips toolchain".into(),
+            detail: bin.join("mips64-elf-gcc").display().to_string(),
+        };
+    }
+    // Binutils-only (an `as` with no matching `gcc`) is a weak fallback.
+    for p in MIPS_PREFIXES {
+        let asm = format!("{p}as");
         if on_path(&asm) {
             return Check {
                 level: Level::Warn,
                 name: "mips toolchain".into(),
-                detail: format!("{asm} present (binutils) — C built via clang -target mips"),
+                detail: format!("{asm} present (binutils only) — run `mb64-build install-toolchain` for gcc"),
             };
         }
     }
     Check {
         level: Level::Fail,
         name: "mips toolchain".into(),
-        detail: "none — `brew install tehzz/n64-dev/mips64-elf-gcc` (or crosstool-ng)".into(),
+        detail: "none — run `mb64-build install-toolchain`".into(),
     }
 }
 
@@ -666,6 +838,30 @@ fn find_mips_prefix() -> Option<String> {
         .iter()
         .find(|p| on_path(&format!("{p}gcc")))
         .map(|p| p.to_string())
+}
+
+fn home() -> PathBuf {
+    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Persistent install prefix for the from-source MIPS cross toolchain. Unlike the
+/// old ephemeral `/tmp/n64tc`, this survives reboots and re-clones.
+///
+/// NB: the path must contain **no spaces** — GNU `configure` rejects a build/source/
+/// prefix path with spaces, which rules out `~/Library/Application Support/…`.
+fn toolchain_prefix() -> PathBuf {
+    home().join(".mb64/toolchain")
+}
+
+/// `bin` dirs that may hold a built `mips64-elf-gcc`, best first: the persistent
+/// install, then the legacy `/tmp/n64tc` (so an existing session keeps working).
+fn toolchain_bin_dirs() -> Vec<PathBuf> {
+    vec![toolchain_prefix().join("bin"), PathBuf::from("/tmp/n64tc/bin")]
+}
+
+/// The `bin` dir of an installed cross toolchain (off PATH), if one exists.
+fn installed_toolchain_bin() -> Option<PathBuf> {
+    toolchain_bin_dirs().into_iter().find(|d| d.join("mips64-elf-gcc").is_file())
 }
 
 /// Replace `dst` with a recursive copy of `src`.

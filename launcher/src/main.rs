@@ -217,7 +217,7 @@ fn App() -> Element {
             match build::start(&repo, &["install-toolchain"]) {
                 Ok(b) => {
                     build_log.set(vec![
-                        "Installing the MIPS toolchain via Homebrew — this can take ~30 minutes…".to_string(),
+                        "Building the MIPS cross toolchain from source — this can take ~30–40 minutes…".to_string(),
                     ]);
                     *build_handle.lock().unwrap() = Some(b);
                     building.set(true);

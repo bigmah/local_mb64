@@ -18,7 +18,7 @@ compiles natively on this Apple Silicon machine.
 | RT64 (Metal) compiles natively here | ✅ `rt64.a` + 56 Metal shaders |
 | N64Recomp + RSPRecomp tools build | ✅ |
 | `baserom.us.z64` provided + SHA-1 verified | ✅ |
-| Native MIPS toolchain (no Docker) | ✅ binutils 2.43 + gcc 14.2 (`mips64-elf-`, built from source → `/tmp/n64tc`) |
+| Native MIPS toolchain (no Docker) | ✅ binutils 2.43 + gcc 14.2 (`mips64-elf-`, from source via `mb64-build install-toolchain` → `~/.mb64/toolchain`) |
 | M0: build `mb64.elf` + `mb64.z64` | ✅ clean build, microcode f3dzex |
 | M1a: **N64Recomp → native C** | ✅ **rc=0, 5106 funcs → 56 C files (470k lines)** |
 | M1b: build the app (link recomp C + runtime + RT64) | ⬜ next |
@@ -65,15 +65,28 @@ Already present on this machine: Xcode + `clang` 17, `cmake` 4.3, `ninja`, `sdl2
 
 MIPS cross-compiler — **must be real GCC** (we tried clang; HackerSM64 uses
 GCC-only inline asm like `asm("f10")` and assembler flags like `-mdivide-breaks`
-that clang rejects). Use the canonical N64-dev toolchain:
+that clang rejects). **Do not use the `tehzz/n64-dev` tap** — it pins gcc 10.2.0 /
+binutils 2.37, whose bundled zlib no longer compiles against the macOS 26 SDK
+(`_stdio.h` parse errors). Instead let the orchestrator build it from source:
 ```bash
-brew install make coreutils            # GNU make 4.x (Apple's 3.81 misparses the Makefile)
-brew trust tehzz/n64-dev               # Homebrew 6 requires trusting third-party taps
-brew install tehzz/n64-dev/mips64-elf-gcc   # builds GCC from source (~30 min)
-# Dioxus CLI — only when we scaffold the launcher UI (later):  cargo install dioxus-cli
+cargo run -p mb64-build -- install-toolchain
 ```
-Then `mips64-elf-` is auto-detected and we build with `COMPILER=gcc` (default) —
-no overrides, no source patches.
+This installs the Homebrew build deps (`make coreutils gmp mpfr libmpc cmake ninja
+sdl2 pkg-config`) and builds **binutils 2.43 + gcc 14.2** for `mips64-elf` from
+source (`--with-system-zlib`, `MAKEINFO=true`, `LIBRARY_PATH` unset, gmp/mpfr/mpc
+from Homebrew) into a persistent prefix:
+
+    ~/.mb64/toolchain
+
+(a deliberately space-free path — GNU `configure` rejects build/source/prefix
+paths that contain spaces, so `~/Library/Application Support/…` can't be used.)
+`build-rom`, `doctor`, and the launcher auto-detect it there (no PATH export
+needed), and the decomp builds with `COMPILER=gcc` (default) — no overrides, no
+source patches. The build tree is left under `~/.mb64/toolchain-build` (safe to
+delete to reclaim ~2 GB).
+
+> Dioxus CLI is only needed to scaffold the launcher UI (later): `cargo install dioxus-cli`.
+> Running the launcher itself is just `cargo run -p mb64-launcher`.
 
 > **CMake 4 gotcha (already hit):** this machine has CMake 4.3, which dropped
 > compatibility with the old `cmake_minimum_required(<3.5)` that bundled libs
@@ -82,12 +95,19 @@ no overrides, no source patches.
 
 ## The orchestrator
 
-`tools/mb64-build` is the Rust CLI that will drive the whole pipeline. Today:
+`tools/mb64-build` is the Rust CLI that drives the whole pipeline:
 ```bash
-cargo run -p mb64-build -- doctor      # verify toolchain + ROM
+cargo run -p mb64-build -- doctor             # verify toolchain + deps + ROM
+cargo run -p mb64-build -- install-toolchain  # one-time: build the MIPS cross gcc
+cargo run -p mb64-build -- build-rom          # decomp → build/rom/mb64.{elf,z64}
+cargo run -p mb64-build -- recompile          # N64Recomp + post-process + RSPRecomp
+cargo run -p mb64-build -- build-app          # cmake/ninja → app/build/mario_builder_64
+cargo run -p mb64-build -- all                # build-rom → recompile → build-app
+cargo run -p mb64-build -- play               # launch the built game
 ```
-Planned subcommands: `build-rom`, `recompile`, `build-app` (currently stubs that
-print their planned steps).
+Local patches under `patches/` are applied automatically at the right stage
+(`Mario-Builder-64-*` before the decomp `make`, `recompiled-*` after N64Recomp,
+`N64ModernRuntime-*` before the app cmake).
 
 ## The de-risking spike (do before sinking time in)
 

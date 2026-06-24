@@ -67,17 +67,27 @@ cd mb64_mac
 #    (already cloned without --recurse-submodules? run:)
 git submodule update --init --recursive
 
-# 2. Apply the local dependency patches (the runtime's scheduler-preemption fix)
-git apply --directory=app/lib/N64ModernRuntime patches/N64ModernRuntime-preemption.patch
+# 2. Check the environment (compilers, cmake/ninja/sdl2, MIPS toolchain, ROM)
+cargo run -p mb64-build -- doctor
 
-# 3. Provide your own US SM64 ROM as baserom.us.z64, then build — see docs/BUILD.md
+# 3. One-time: install the MIPS cross toolchain (binutils + gcc, built from source
+#    into ~/.mb64/toolchain, ~30–40 min) plus the Homebrew build deps. Skips
+#    anything already present.
+cargo run -p mb64-build -- install-toolchain
+
+# 4. Provide your own US SM64 ROM as baserom.us.z64 at the repo root, then build:
+cargo run -p mb64-build -- all     # build-rom → recompile → build-app
+cargo run -p mb64-build -- play    # …or drive steps 3–4 from the Dioxus launcher:
+cargo run -p mb64-launcher         # Install toolchain · Select ROM · Build · Play
 ```
 
 Nothing third-party is committed into this repo: `app/lib/*` are pinned git
-submodules, and the only local change to a dependency (the scheduler-preemption
-fix in `N64ModernRuntime`) is kept as a reviewable patch under `patches/` and
-applied after submodule checkout. (Automating step 2 in the `mb64-build`
-orchestrator is a TODO.)
+submodules, and local changes to dependencies / generated code are kept as
+reviewable patches under `patches/`, applied automatically by the `mb64-build`
+orchestrator at the right pipeline stage (the `N64ModernRuntime` scheduler-preemption
+fix before the app build; the decomp IPA-clone CFLAGS fix before `make`). The MIPS
+cross toolchain is built from source on demand — never committed — into a persistent
+per-user location the orchestrator and launcher auto-detect.
 
 ## Docs
 
