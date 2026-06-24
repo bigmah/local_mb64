@@ -109,6 +109,36 @@ Local patches under `patches/` are applied automatically at the right stage
 (`Mario-Builder-64-*` before the decomp `make`, `recompiled-*` after N64Recomp,
 `N64ModernRuntime-*` before the app cmake).
 
+## Releases — the downloadable launcher
+
+`.github/workflows/release.yml` publishes the **launcher** as a macOS `.dmg` on
+every `v*` tag (build it manually via *Run workflow* / `workflow_dispatch`).
+
+- It builds **only our two Rust binaries** — `mb64-launcher` + `mb64-build` — on a
+  `macos-14` (Apple Silicon) runner. It does **not** check out the game submodules,
+  build the game, or touch a ROM, so nothing copyrighted is fetched or shipped.
+- `.github/scripts/package-macos.sh` assembles `Mario Builder 64 Launcher.app`
+  (both binaries side by side in `Contents/MacOS/`, so the launcher finds its
+  orchestrator as a sibling — see `bootstrap::orchestrator_path`), ad-hoc signs it,
+  and wraps it in a drag-to-Applications `.dmg`.
+- **Version pin:** CI stamps `MB64_SOURCE_REF=${{ github.ref_name }}` into the
+  launcher (read via `option_env!` in `bootstrap::source_ref`). On first run the
+  launcher clones this repo at exactly that ref, so the bundled `mb64-build` always
+  matches the source it builds. Unset (dev builds) → tracks `main`.
+
+On the user's Mac the launcher does the rest: detect/offer to install the host
+prereqs (Command Line Tools, Homebrew), `git clone --recurse-submodules` into
+`~/.mb64/src`, then the normal `install-toolchain` → `all` build from their ROM.
+
+> The `.app` is **unsigned / un-notarized** (no Apple Developer account yet). On
+> macOS Sequoia the old right-click → Open bypass is gone, so the first launch is
+> allowed via **System Settings → Privacy & Security → Open Anyway**, or by clearing
+> the quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Mario Builder 64 Launcher.app"`.
+> Proper **Developer ID signing + notarization** (which removes this prompt entirely)
+> is future work — it needs a paid Apple Developer account; CI would add a
+> `codesign --options runtime` + `xcrun notarytool submit --wait` + `xcrun stapler`
+> step using stored signing secrets.
+
 ## The de-risking spike (do before sinking time in)
 
 1. **RT64-Metal compiles here?** — build the RT64 renderer from source on this

@@ -1,22 +1,21 @@
 //! Mario Builder 64 — macOS launcher (Dioxus desktop).
 //!
-//! A small GUI that owns the three things the game can't configure itself:
-//!   • the ROM — verify the user's `mb64.z64` against the game's exact hash and
-//!     provision it into the data dir,
-//!   • the working directory — the game reads/writes everything (ROM, virtual SD
-//!     card, saves) relative to its CWD,
-//!   • launch + window options — passed to the game as env vars on spawn.
-//!
-//! The UX is deliberately two steps: **add your ROM**, then **Play**. Dropping in
-//! a US Super Mario 64 ROM kicks off the whole build automatically (installing the
-//! MIPS toolchain first if it's missing); the raw build log is tucked behind a
-//! "Show build details" disclosure so a non-programmer never has to read it.
+//! A small GUI that owns everything the game can't configure itself, with a
+//! deliberately simple path for non-developers:
+//!   1. **Set up** (first run only) — make sure the host build tools are present
+//!      and clone the game source. A downloaded `.app` ships only our own Rust
+//!      binaries, so on first launch it provisions the rest here.
+//!   2. **Add your ROM** — verify the user's US Super Mario 64 ROM and build
+//!      Mario Builder 64 from it automatically.
+//!   3. **Play** — spawn, monitor, and stop the built game.
 //!
 //! The game runs as a separate process (a WebView can't host the Metal render
-//! loop), which the launcher spawns, monitors, and can stop.
+//! loop), which the launcher spawns, monitors, and can stop. The raw build/clone
+//! log is tucked behind a "Show build details" disclosure.
 
 mod core;
 
+use crate::core::bootstrap::{self, Prereqs, SourceStatus, PREREQS};
 use crate::core::build::{self, Build};
 use crate::core::game::{self, Preflight};
 use crate::core::paths;
@@ -38,7 +37,7 @@ fn main() {
     let window = WindowBuilder::new()
         .with_title("Mario Builder 64 — Launcher")
         .with_resizable(true)
-        .with_inner_size(LogicalSize::new(640.0, 680.0));
+        .with_inner_size(LogicalSize::new(640.0, 720.0));
     let cfg = Config::new().with_window(window);
     dioxus::LaunchBuilder::new().with_cfg(cfg).launch(App);
 }
@@ -52,11 +51,20 @@ enum GameStatus {
     Failed(String),
 }
 
-/// Where the (possibly multi-step) build pipeline currently is. Drives the
-/// friendly progress text; refined live as the build's banner lines stream in.
+/// What the currently-running child process is doing, so the completion handler
+/// can react appropriately (a finished clone vs a finished build).
+#[derive(Clone, Copy, PartialEq)]
+enum Job {
+    Clone,
+    Build,
+}
+
+/// Where the (possibly multi-step) pipeline currently is. Drives the friendly
+/// progress text; refined live as the build's banner lines stream in.
 #[derive(Clone, Copy, PartialEq)]
 enum Phase {
     Idle,
+    Cloning,
     InstallingTools,
     BuildingRom,
     Recompiling,
@@ -66,7 +74,7 @@ enum Phase {
 }
 
 impl Phase {
-    /// The phase a freshly-started step begins in (refined later by banners).
+    /// The phase a freshly-started build step begins in (refined later by banners).
     fn for_args(args: &[&str]) -> Phase {
         match args.first().copied() {
             Some("install-toolchain") => Phase::InstallingTools,
@@ -78,18 +86,20 @@ impl Phase {
     fn label(self) -> &'static str {
         match self {
             Phase::Idle => "Getting ready…",
+            Phase::Cloning => "Downloading the game source…",
             Phase::InstallingTools => "Installing build tools (one-time setup)…",
             Phase::BuildingRom => "Step 1 of 3 — Building the game from your ROM…",
             Phase::Recompiling => "Step 2 of 3 — Recompiling for macOS…",
             Phase::CompilingApp => "Step 3 of 3 — Compiling the app…",
             Phase::Done => "All done!",
-            Phase::Failed => "Build stopped",
+            Phase::Failed => "Stopped",
         }
     }
 
     /// Rough progress for the bar: `(percent, indeterminate)`.
     fn progress(self) -> (u32, bool) {
         match self {
+            Phase::Cloning => (20, true),
             Phase::InstallingTools => (15, true),
             Phase::BuildingRom => (25, false),
             Phase::Recompiling => (55, false),
@@ -168,27 +178,29 @@ fn App() -> Element {
     let mut game_status = use_signal(|| GameStatus::Idle);
     let mut notice = use_signal(|| Option::<String>::None);
 
-    // Build-from-base-ROM state.
-    let repo = use_hook(paths::find_repo_root);
-    let mut base_rom_ok = use_signal({
-        let repo = repo.clone();
-        move || repo.as_deref().map(build::baserom_in_place).unwrap_or(false)
-    });
+    // Bootstrap + build state.
+    let mut base_rom_ok =
+        use_signal(|| build::baserom_in_place(&Settings::load().source_dir));
+    let source_status =
+        use_signal(|| bootstrap::source_status(&Settings::load().source_dir));
+    let mut prereqs = use_signal(Prereqs::snapshot);
+    let tools_present = use_signal(build::toolchain_present);
     let building = use_signal(|| false);
     let build_log = use_signal(Vec::<String>::new);
     let phase = use_signal(|| Phase::Idle);
     let build_failed = use_signal(|| false);
+    let job = use_signal(|| Job::Build);
     // Build steps still queued behind the running one (e.g. `all` after the
     // toolchain install). The poll loop pops the next as each finishes.
     let pending = use_signal(Vec::<Vec<String>>::new);
     let build_handle = use_hook(|| Arc::new(Mutex::new(None::<Build>)));
 
-    // Shared handle to the child process. Held across the UI and the poll loop;
-    // try_wait() (non-blocking) reaps it without consuming, so the Stop button can
-    // still signal it by pid.
+    // Shared handle to the game child process. Held across the UI and the poll
+    // loop; try_wait() (non-blocking) reaps it without consuming, so the Stop
+    // button can still signal it by pid.
     let proc = use_hook(|| Arc::new(Mutex::new(None::<Child>)));
 
-    // Poll the child for exit and reflect it in the UI.
+    // Poll the game child for exit and reflect it in the UI.
     {
         let proc = proc.clone();
         use_future(move || {
@@ -210,22 +222,24 @@ fn App() -> Element {
         });
     }
 
-    // Poll the build child: stream its output into the log (hidden behind a
-    // disclosure), refine the phase from its banner lines, and on success advance
-    // to the next queued step — so an upload drives toolchain → build → done with
-    // no further clicks.
+    // Poll the build/clone child: stream its output into the log (hidden behind a
+    // disclosure), refine the phase from banner lines, and on success either
+    // advance the queued build steps or finish the job (clone vs build).
     {
         let build_handle = build_handle.clone();
-        let repo = repo.clone();
         let mut building = building;
         let mut phase = phase;
         let mut build_log = build_log;
         let mut build_failed = build_failed;
         let mut pending = pending;
         let mut rom_status = rom_status;
+        let mut source_status = source_status;
+        let mut tools_present = tools_present;
+        let job = job;
+        let settings = settings;
+        let mut notice = notice;
         use_future(move || {
             let build_handle = build_handle.clone();
-            let repo = repo.clone();
             async move {
                 loop {
                     futures_timer::Delay::new(Duration::from_millis(250)).await;
@@ -256,35 +270,54 @@ fn App() -> Element {
                             build_failed.set(true);
                             pending.set(Vec::new());
                             notice.set(Some(
-                                "The build hit a problem. Open “Show build details” to see what happened."
+                                "Something stopped. Open “Show build details” to see what happened."
                                     .to_string(),
                             ));
                             continue;
                         }
 
-                        // Success — start the next queued step, or finish.
+                        // Success — start the next queued build step, if any.
                         let mut steps = pending();
-                        if steps.is_empty() {
-                            build_log.write().push("✅ All done — press Play.".to_string());
-                            phase.set(Phase::Done);
-                            building.set(false);
-                            rom_status
-                                .set(rom::data_dir_rom_status(&settings.read().data_dir));
-                        } else {
-                            let next = steps.remove(0);
+                        if let Some(next) = (!steps.is_empty()).then(|| steps.remove(0)) {
                             pending.set(steps);
-                            if let Some(repo) = repo.as_deref() {
-                                build_log.write().push(format!("→ {}", next.join(" ")));
-                                let argv: Vec<&str> = next.iter().map(String::as_str).collect();
-                                start_step(
-                                    repo,
-                                    &build_handle,
-                                    &argv,
-                                    building,
-                                    phase,
-                                    build_log,
-                                    build_failed,
-                                    notice,
+                            let repo = settings.read().source_dir.clone();
+                            build_log.write().push(format!("→ {}", next.join(" ")));
+                            let argv: Vec<&str> = next.iter().map(String::as_str).collect();
+                            start_step(
+                                &repo,
+                                &build_handle,
+                                &argv,
+                                building,
+                                phase,
+                                build_log,
+                                build_failed,
+                                notice,
+                            );
+                            continue;
+                        }
+
+                        // No steps left — the job is done.
+                        building.set(false);
+                        tools_present.set(build::toolchain_present());
+                        match job() {
+                            Job::Clone => {
+                                source_status.set(bootstrap::source_status(
+                                    &settings.read().source_dir,
+                                ));
+                                phase.set(Phase::Idle);
+                                build_log.write().push("✅ Source ready — add your ROM.".to_string());
+                            }
+                            Job::Build => {
+                                rom_status
+                                    .set(rom::data_dir_rom_status(&settings.read().data_dir));
+                                phase.set(Phase::Done);
+                                let built = settings.read().game_binary.is_file();
+                                build_log.write().push(
+                                    if built {
+                                        "✅ All done — press Play.".to_string()
+                                    } else {
+                                        "✅ Build tools ready.".to_string()
+                                    },
                                 );
                             }
                         }
@@ -295,13 +328,19 @@ fn App() -> Element {
     }
 
     let s = settings.read().clone();
+    let source_dir = s.source_dir.clone();
     let binary_found = s.game_binary.is_file();
     let rom_ready = rom_status() == DataDirRom::Ready;
     let running = matches!(game_status(), GameStatus::Running(_));
     let is_building = building();
     let ready_to_play = binary_found && rom_ready;
     let failed = build_failed();
-    let toolchain_ok = build::toolchain_present();
+    let tools_ok = tools_present();
+
+    // Setup readiness.
+    let prereq = prereqs();
+    let source_ready = source_status() == SourceStatus::Ready;
+    let setup_done = prereq.ok() && source_ready;
 
     // Progress display state.
     let cur_phase = phase();
@@ -314,36 +353,83 @@ fn App() -> Element {
 
     // Two-step indicator state.
     let step1_done = base_rom_ok() || is_building || ready_to_play || running;
-    let step1_class = if step1_done { "step done" } else { "step active" };
+    let step1_class = if setup_done && !step1_done { "step active" } else if step1_done { "step done" } else { "step" };
     let step2_active = ready_to_play || running;
     let step2_class = if step2_active { "step active" } else { "step" };
 
     // ── handlers ──────────────────────────────────────────────────────────────
-    let on_pick_baserom = {
-        let repo = repo.clone();
+    // Clone the source — used by the Setup button and by "Try again".
+    let start_clone = {
         let build_handle = build_handle.clone();
+        let source_dir = source_dir.clone();
+        use_callback(move |_: ()| {
+            let mut job = job;
+            let mut build_log = build_log;
+            let mut pending = pending;
+            let mut building = building;
+            let mut phase = phase;
+            let mut build_failed = build_failed;
+            let mut notice = notice;
+            job.set(Job::Clone);
+            pending.set(Vec::new());
+            build_log.set(vec!["Setting up — downloading the game source…".to_string()]);
+            match bootstrap::clone_source(&source_dir) {
+                Ok(b) => {
+                    *build_handle.lock().unwrap() = Some(b);
+                    phase.set(Phase::Cloning);
+                    build_failed.set(false);
+                    building.set(true);
+                    notice.set(None);
+                }
+                Err(e) => {
+                    build_failed.set(true);
+                    phase.set(Phase::Failed);
+                    notice.set(Some(format!("Couldn't start setup: {e}")));
+                }
+            }
+        })
+    };
+
+    // Run the full build pipeline — used by "Try again" and "Rebuild".
+    let rebuild = {
+        let build_handle = build_handle.clone();
+        let source_dir = source_dir.clone();
+        use_callback(move |_: ()| {
+            let mut job = job;
+            job.set(Job::Build);
+            begin_build_chain(
+                &source_dir,
+                &build_handle,
+                building,
+                phase,
+                build_log,
+                build_failed,
+                pending,
+                notice,
+            );
+        })
+    };
+
+    let on_pick_baserom = {
+        let build_handle = build_handle.clone();
+        let source_dir = source_dir.clone();
         move |_| {
-            let repo = repo.clone();
             let build_handle = build_handle.clone();
+            let source_dir = source_dir.clone();
             spawn(async move {
-                let Some(repo) = repo else {
-                    notice.set(Some(
-                        "Can't find the project folder — run the launcher from inside the repo."
-                            .into(),
-                    ));
-                    return;
-                };
                 let picked = rfd::AsyncFileDialog::new()
                     .add_filter("N64 ROM", &["z64", "n64", "v64"])
                     .set_title("Select your US Super Mario 64 ROM")
                     .pick_file()
                     .await;
                 let Some(file) = picked else { return };
-                match build::place_baserom(file.path(), &repo) {
+                match build::place_baserom(file.path(), &source_dir) {
                     Ok(()) => {
                         base_rom_ok.set(true);
+                        let mut job = job;
+                        job.set(Job::Build);
                         begin_build_chain(
-                            &repo,
+                            &source_dir,
                             &build_handle,
                             building,
                             phase,
@@ -359,42 +445,18 @@ fn App() -> Element {
         }
     };
 
-    // Used by both "Try again" and "Rebuild", so it's a Copy Callback.
-    let rebuild = {
-        let repo = repo.clone();
-        let build_handle = build_handle.clone();
-        use_callback(move |_: ()| {
-            let Some(repo) = repo.clone() else {
-                notice.set(Some("Can't find the project folder.".into()));
-                return;
-            };
-            begin_build_chain(
-                &repo,
-                &build_handle,
-                building,
-                phase,
-                build_log,
-                build_failed,
-                pending,
-                notice,
-            );
-        })
-    };
-
     let on_install_toolchain = {
-        let repo = repo.clone();
         let build_handle = build_handle.clone();
+        let source_dir = source_dir.clone();
         move |_| {
-            let Some(repo) = repo.clone() else {
-                notice.set(Some("Can't find the project folder.".into()));
-                return;
-            };
+            let mut job = job;
             let mut build_log = build_log;
             let mut pending = pending;
+            job.set(Job::Build);
             build_log.set(vec!["Installing build tools…".to_string()]);
             pending.set(Vec::new());
             start_step(
-                &repo,
+                &source_dir,
                 &build_handle,
                 &["install-toolchain"],
                 building,
@@ -508,7 +570,7 @@ fn App() -> Element {
                         div { class: "spinner" }
                         h2 { "{cur_phase.label()}" }
                         p { class: "muted",
-                            "Building the game from your ROM. This can take several minutes — you can leave it running."
+                            "This can take a while — you can leave it running."
                         }
                         div { class: "progress",
                             div { class: "{fill_class}", style: "width: {pct}%" }
@@ -536,17 +598,76 @@ fn App() -> Element {
                         div { class: "big-x", "!" }
                         h2 { "Something went wrong" }
                         p { class: "muted",
-                            "The build didn't finish. You can try again, or open the details to see what happened."
+                            "It didn't finish. You can try again, or open the details to see what happened."
                         }
-                        button { class: "btn play-btn", onclick: move |_| rebuild.call(()), "Try again" }
+                        button {
+                            class: "btn play-btn",
+                            onclick: move |_| if job() == Job::Clone { start_clone.call(()) } else { rebuild.call(()) },
+                            "Try again"
+                        }
                         if has_log {
                             details { class: "logwrap",
-                                summary { "Show build details" }
+                                summary { "Show details" }
                                 pre { class: "buildlog", "{log_text}" }
                             }
                         }
                     }
+                } else if !setup_done {
+                    // First-run setup: host tools + game source.
+                    div { class: "stage-body",
+                        if !prereq.ok() {
+                            div { class: "big-icon", "🧰" }
+                            h2 { "One-time setup" }
+                            p { class: "muted",
+                                "Mario Builder 64 builds itself on your Mac. It needs a couple of free Apple/Homebrew tools first."
+                            }
+                            div { class: "prereqs",
+                                for p in PREREQS {
+                                    div { class: "prereq",
+                                        span { class: if prereq.present(p) { "pre-dot ok" } else { "pre-dot" },
+                                            if prereq.present(p) { "✓" } else { "" }
+                                        }
+                                        div { class: "pre-text",
+                                            div { class: "pre-title", "{p.title()}" }
+                                            div { class: "muted small", "{p.detail()}" }
+                                        }
+                                        if prereq.present(p) {
+                                            span { class: "ok small", "Installed" }
+                                        } else {
+                                            button {
+                                                class: "btn",
+                                                onclick: move |_| {
+                                                    match p.begin_install() {
+                                                        Ok(()) => notice.set(Some("Follow the installer that opened, then click “Re-check”.".into())),
+                                                        Err(e) => notice.set(Some(format!("Couldn't start the installer: {e}"))),
+                                                    }
+                                                },
+                                                "Install"
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            button {
+                                class: "btn",
+                                onclick: move |_| prereqs.set(Prereqs::snapshot()),
+                                "Re-check"
+                            }
+                        } else {
+                            div { class: "big-icon", "⬇️" }
+                            h2 { "Set up Mario Builder 64" }
+                            p { class: "muted",
+                                "Download the game source so it can be built on your Mac. No ROM or game files are included — you'll add your own ROM next."
+                            }
+                            button {
+                                class: "btn play-btn",
+                                onclick: move |_| start_clone.call(()),
+                                "Set up"
+                            }
+                        }
+                    }
                 } else {
+                    // Source + tools ready: add the ROM.
                     div { class: "stage-body",
                         div { class: "big-icon", "🎮" }
                         h2 { "Add your Super Mario 64 ROM" }
@@ -554,9 +675,9 @@ fn App() -> Element {
                             "Choose your legally-owned US Super Mario 64 ROM (.z64). The launcher builds Mario Builder 64 from it automatically — then just press Play."
                         }
                         button { class: "btn play-btn", onclick: on_pick_baserom, "Select your ROM…" }
-                        if !toolchain_ok {
+                        if !tools_ok {
                             p { class: "muted small",
-                                "First time on this Mac? Setup also installs the build tools it needs — a one-time step that can take a while."
+                                "First build also installs the MIPS toolchain — a one-time step that can take a while."
                             }
                         }
                     }
@@ -578,9 +699,21 @@ fn App() -> Element {
                         }
                         button {
                             class: "btn",
-                            disabled: is_building || running,
+                            disabled: is_building || running || !source_ready,
                             onclick: move |_| rebuild.call(()),
                             "Rebuild"
+                        }
+                    }
+                    div { class: "adv-item",
+                        div {
+                            div { class: "adv-title", "Update / re-clone source" }
+                            p { class: "muted small", "Re-fetch the game source and submodules." }
+                        }
+                        button {
+                            class: "btn",
+                            disabled: is_building || running || !prereq.ok(),
+                            onclick: move |_| start_clone.call(()),
+                            "Update"
                         }
                     }
                     div { class: "adv-item",
@@ -590,9 +723,9 @@ fn App() -> Element {
                         }
                         button {
                             class: "btn",
-                            disabled: is_building || running,
+                            disabled: is_building || running || !source_ready,
                             onclick: on_install_toolchain,
-                            if toolchain_ok { "Reinstall" } else { "Install" }
+                            if tools_ok { "Reinstall" } else { "Install" }
                         }
                     }
                     div { class: "adv-item",
@@ -657,7 +790,7 @@ fn App() -> Element {
             }
 
             footer { class: "footer",
-                span { class: "path", "Data: {s.data_dir.display()}" }
+                span { class: "path", "Source: {source_dir.display()}" }
                 div { class: "links",
                     button {
                         class: "link",

@@ -2,6 +2,7 @@
 //! settings persistence, and child-process management. Kept free of any Dioxus
 //! types so it can be unit-tested on its own (`cargo test -p mb64-launcher`).
 
+pub mod bootstrap;
 pub mod build;
 pub mod game;
 pub mod paths;
