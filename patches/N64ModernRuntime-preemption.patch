@@ -113,3 +113,22 @@ index ca1556c..4a41745 100644
  }
  
  extern "C" void osInitialize() {
+
+diff --git a/N64Recomp/include/recomp.h b/N64Recomp/include/recomp.h
+index 73f3e73..7af1409 100644
+--- a/N64Recomp/include/recomp.h
++++ b/N64Recomp/include/recomp.h
+@@ -468,6 +468,13 @@ void recomp_syscall_handler(uint8_t* rdram, recomp_context* ctx, int32_t instruc
+ 
+ void pause_self(uint8_t *rdram);
+ 
++// Scheduler preemption (N64ModernRuntime-preemption patch): the recompiled code
++// checks `recomp_should_preempt` at loop back-edges and calls recomp_preempt() to
++// yield to a higher-priority thread. Both are defined in ultramodern/src/scheduling.cpp.
++extern volatile int recomp_should_preempt;
++extern int recomp_interrupts_disabled;
++void recomp_preempt(uint8_t* rdram);
++
+ #ifdef __cplusplus
+ }
+ #endif

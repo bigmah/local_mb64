@@ -431,9 +431,11 @@ fn postprocess_renames(funcs: &Path) -> Result<()> {
     let mut touched = 0;
     for entry in fs::read_dir(funcs).with_context(|| format!("reading {}", funcs.display()))? {
         let path = entry?.path();
+        // Include `.inl` — recomp_overlays.inl references these funcs in the section
+        // table, and must be renamed in lockstep with funcs.{c,h} or it binds to libc.
         let is_src = path
             .extension()
-            .map(|e| e == "c" || e == "h")
+            .map(|e| e == "c" || e == "h" || e == "inl")
             .unwrap_or(false);
         if !is_src {
             continue;
