@@ -2609,6 +2609,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha1",
  "xxhash-rust",
 ]
 
