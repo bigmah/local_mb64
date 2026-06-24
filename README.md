@@ -77,8 +77,8 @@ cargo run -p mb64-build -- install-toolchain
 
 # 4. Provide your own US SM64 ROM as baserom.us.z64 at the repo root, then build:
 cargo run -p mb64-build -- all     # build-rom → recompile → build-app
-cargo run -p mb64-build -- play    # …or drive steps 3–4 from the Dioxus launcher:
-cargo run -p mb64-launcher         # Install toolchain · Select ROM · Build · Play
+cargo run -p mb64-build -- play    # …or just use the Dioxus launcher:
+cargo run -p mb64-launcher         # drop in your SM64 ROM → it builds itself → Play
 ```
 
 Nothing third-party is committed into this repo: `app/lib/*` are pinned git
