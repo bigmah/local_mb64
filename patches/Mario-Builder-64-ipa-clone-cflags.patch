@@ -1,0 +1,15 @@
+diff --git a/Makefile b/Makefile
+index d599d43..7232ac5 100755
+--- a/Makefile
++++ b/Makefile
+@@ -481,6 +481,10 @@ CFLAGS = -std=gnu17 -G 0 $(OPT_FLAGS) $(TARGET_CFLAGS) $(MIPSISET) $(DEF_INC_CFL
+ ifeq ($(COMPILER),gcc)
+   CFLAGS += -mno-shared -march=vr4300 -mfix4300 -mabi=32 -mhard-float -mdivide-breaks -fno-stack-protector -fno-common -fno-zero-initialized-in-bss -fno-PIC -mno-abicalls -fno-strict-aliasing -fno-inline-functions -ffreestanding -fwrapv -Wall -Wextra
+   CFLAGS += -Wno-missing-braces -Wno-comment
++  # macOS recomp port: stop GCC's IPA passes from emitting dotted clone names
++  # (foo.constprop.0 / foo.isra.0 / foo.part.0) — N64Recomp emits them verbatim and
++  # '.' is illegal in a C identifier, so the recompiled C otherwise won't compile.
++  CFLAGS += -fno-ipa-cp -fno-ipa-sra -fno-partial-inlining
+ else ifeq ($(COMPILER),clang)
+   CFLAGS += -mfpxx -target mips -mabi=32 -G 0 -mhard-float -fomit-frame-pointer -fno-stack-protector -fno-common -I include -I src/ -I $(BUILD_DIR)/include -fno-PIC -mno-abicalls -fno-strict-aliasing -fno-inline-functions -ffreestanding -fwrapv -Wall -Wextra
+   CFLAGS += -Wno-missing-braces
