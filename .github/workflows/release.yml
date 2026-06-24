@@ -41,30 +41,38 @@ jobs:
       - name: Build launcher + orchestrator (release)
         run: cargo build --release -p mb64-launcher -p mb64-build
 
-      - name: Package .app and .dmg
+      - name: Package binaries (.tar.gz)
         run: bash .github/scripts/package-macos.sh
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: MarioBuilder64-Launcher-macos-arm64
-          path: dist/*.dmg
+          path: dist/*
           if-no-files-found: error
 
       - name: Attach to GitHub Release (tags only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.dmg
+          files: |
+            dist/mb64-macos-arm64.tar.gz
+            dist/mb64-macos-arm64.tar.gz.sha256
           fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             Native macOS (Apple Silicon) launcher for Mario Builder 64.
 
-            **This download contains no game or ROM.** On first launch the
-            launcher checks for the host build tools, clones the open-source
-            project, and builds the game on your Mac from **your own** legally
-            owned US Super Mario 64 ROM.
+            **Install (no download prompts, nothing to sign around):**
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+            ```
 
-            The app is unsigned/un-notarized, so the first time you open it,
-            **right-click the app → Open** to get past Gatekeeper.
+            **This release contains no game or ROM** — only our launcher +
+            build tooling. On first launch the app checks for the host build
+            tools, clones the open-source project, and builds the game on your
+            Mac from **your own** legally owned US Super Mario 64 ROM.
+
+            The binaries are unsigned (anonymous ad-hoc only). The installer
+            fetches them with `curl`, which doesn't set macOS's quarantine flag,
+            so the app opens with no Gatekeeper prompt.

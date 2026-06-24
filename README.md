@@ -45,31 +45,26 @@ the game's media. This is a **source-available** project: you build it yourself
 and bring your own ROM. No ROMs, extracted assets, recompiled game code, or
 prebuilt app binaries are distributed. See [docs/LEGAL.md](docs/LEGAL.md).
 
-## Download the launcher (easiest — no command line)
+## Install (one command)
 
-Don't want to touch a terminal? Grab the prebuilt **launcher** from the
-[Releases page](https://github.com/bigmah/mb64_mac.git/releases):
+```sh
+curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+```
 
-1. Download `MarioBuilder64-Launcher-*.dmg`, open it, and drag the app to **Applications**.
-2. The app is **unsigned**, so macOS Gatekeeper blocks the first launch with
-   *"Apple could not verify…"*. To allow it (pick one):
-   - **System Settings** → **Privacy & Security** → scroll down → click **Open Anyway**
-     (it appears right after the blocked attempt), then **Open**. *(On macOS Sequoia
-     the old right-click → Open shortcut no longer offers a bypass — use this.)*
-   - …or in **Terminal**, clear the download flag once:
-     ```bash
-     xattr -dr com.apple.quarantine "/Applications/Mario Builder 64 Launcher.app"
-     ```
-     then double-click normally.
-3. In the launcher: **Set up** (it checks for Apple's Command Line Tools + Homebrew,
-   offering to install anything missing, then clones this open-source project) →
-   **Add your ROM** (your own US SM64 `.z64`) → it builds itself → **Play**.
+This downloads the **prebuilt** launcher, installs it into your Applications folder,
+and opens it. Nothing is compiled by the installer, and **no ROM or game data is
+downloaded** — only our own launcher + build tooling. You add your own ROM in the app.
 
-The download contains **only our own launcher + build tooling** — no ROM, no game
-code, no Nintendo assets. The game is built locally on your Mac from *your* ROM the
-first time you run it (the first build compiles a MIPS toolchain and can take a
-while). Building from source still requires Xcode Command Line Tools and Homebrew;
-the launcher will walk you through installing them.
+> **Why a one-liner and not a clickable download?** The app is unsigned (no Apple
+> Developer ID — deliberately, this is an unofficial project). macOS Gatekeeper blocks
+> unsigned apps you download in a **browser**, but `curl` downloads aren't flagged that
+> way, so the installed app just opens — no "unidentified developer" wall, no signing,
+> no Apple account involved.
+
+Then, in the app: **Set up** (it checks for Apple's Command Line Tools + Homebrew,
+offering to install anything missing, then clones this open-source project) → **Add
+your ROM** (your own US SM64 `.z64`) → it builds itself → **Play**. The first build
+compiles a MIPS toolchain and can take a while.
 
 ## Layout
 

@@ -109,35 +109,43 @@ Local patches under `patches/` are applied automatically at the right stage
 (`Mario-Builder-64-*` before the decomp `make`, `recompiled-*` after N64Recomp,
 `N64ModernRuntime-*` before the app cmake).
 
-## Releases — the downloadable launcher
+## Releases — the one-line installer
 
-`.github/workflows/release.yml` publishes the **launcher** as a macOS `.dmg` on
-every `v*` tag (build it manually via *Run workflow* / `workflow_dispatch`).
+Users install with:
+```sh
+curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+```
+`install.sh` downloads the prebuilt binaries from the latest release, assembles
+`Mario Builder 64 Launcher.app` (both binaries side by side in `Contents/MacOS/`, so
+the launcher finds its orchestrator as a sibling — see `bootstrap::orchestrator_path`),
+and opens it. Overridable via `MB64_VERSION` (pin a tag), `MB64_TARBALL` (offline
+install from a local file), `MB64_APP_DIR` (install location).
 
-- It builds **only our two Rust binaries** — `mb64-launcher` + `mb64-build` — on a
+`.github/workflows/release.yml` produces what the installer downloads, on every `v*`
+tag (or manual `workflow_dispatch`):
+- Builds **only our two Rust binaries** — `mb64-launcher` + `mb64-build` — on a
   `macos-14` (Apple Silicon) runner. It does **not** check out the game submodules,
   build the game, or touch a ROM, so nothing copyrighted is fetched or shipped.
-- `.github/scripts/package-macos.sh` assembles `Mario Builder 64 Launcher.app`
-  (both binaries side by side in `Contents/MacOS/`, so the launcher finds its
-  orchestrator as a sibling — see `bootstrap::orchestrator_path`), ad-hoc signs it,
-  and wraps it in a drag-to-Applications `.dmg`.
+- `.github/scripts/package-macos.sh` tars the two binaries into
+  `mb64-macos-arm64.tar.gz` (+ a `.sha256`) and attaches them to the Release.
 - **Version pin:** CI stamps `MB64_SOURCE_REF=${{ github.ref_name }}` into the
-  launcher (read via `option_env!` in `bootstrap::source_ref`). On first run the
-  launcher clones this repo at exactly that ref, so the bundled `mb64-build` always
-  matches the source it builds. Unset (dev builds) → tracks `main`.
+  launcher (read via `option_env!` in `bootstrap::source_ref`; `launcher/build.rs`
+  forces a rebuild when it changes). On first run the launcher clones this repo at
+  exactly that ref, so the bundled `mb64-build` always matches the source it builds.
+  Unset (dev builds) → tracks `main`.
 
 On the user's Mac the launcher does the rest: detect/offer to install the host
 prereqs (Command Line Tools, Homebrew), `git clone --recurse-submodules` into
 `~/.mb64/src`, then the normal `install-toolchain` → `all` build from their ROM.
 
-> The `.app` is **unsigned / un-notarized** (no Apple Developer account yet). On
-> macOS Sequoia the old right-click → Open bypass is gone, so the first launch is
-> allowed via **System Settings → Privacy & Security → Open Anyway**, or by clearing
-> the quarantine flag: `xattr -dr com.apple.quarantine "/Applications/Mario Builder 64 Launcher.app"`.
-> Proper **Developer ID signing + notarization** (which removes this prompt entirely)
-> is future work — it needs a paid Apple Developer account; CI would add a
-> `codesign --options runtime` + `xcrun notarytool submit --wait` + `xcrun stapler`
-> step using stored signing secrets.
+> **No code signing, by design.** The binaries carry only the toolchain's anonymous
+> ad-hoc signature (the minimum the arm64 kernel needs to run a binary — no identity,
+> no name). We don't use a Developer ID or notarize: a Developer ID certificate would
+> embed the account's legal/entity name in the app, and it isn't needed here. Because
+> the installer fetches the binaries with `curl` (which doesn't set the
+> `com.apple.quarantine` flag, unlike a browser download), Gatekeeper doesn't prompt —
+> the app just opens. This is why the install path is a `curl | bash` one-liner rather
+> than a `.dmg`.
 
 ## The de-risking spike (do before sinking time in)
 
