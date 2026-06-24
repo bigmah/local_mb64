@@ -19,6 +19,9 @@ target/
 **/*.rs.bk
 Cargo.lock.bak
 
+# ── Release packaging output (.app / .dmg built by .github/scripts) ────────────
+dist/
+
 # ── N64Recomp / CMake build output ────────────────────────────────────────────
 cmake-build*/
 RecompiledFuncs/

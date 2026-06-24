@@ -120,17 +120,43 @@ pub fn toolchain_present() -> bool {
     on_path || toolchain_bin_dirs().iter().any(|d| d.join("mips64-elf-gcc").is_file())
 }
 
-/// Spawn `mb64-build <subcmd>` in the repo, merging stdout+stderr into a line
-/// stream. Uses `cargo run` so a fresh clone needs nothing pre-built.
+/// Spawn `mb64-build <subcmd>` with the repo as its working directory, merging
+/// stdout+stderr into a line stream. Prefers the prebuilt `mb64-build` binary
+/// bundled next to the launcher (so a downloaded `.app` needs no Rust); falls back
+/// to `cargo run` inside a dev checkout.
 pub fn start(repo: &Path, subcmd: &[&str]) -> Result<Build> {
-    let mut child = Command::new("cargo")
-        .current_dir(repo)
-        .args(["run", "--quiet", "-p", "mb64-build", "--"])
-        .args(subcmd)
+    let mut cmd = orchestrator_command(repo);
+    cmd.args(subcmd);
+    spawn_streamed(cmd).with_context(|| "spawning mb64-build")
+}
+
+/// Build the base `Command` for the orchestrator (without its subcommand args),
+/// rooted at `repo`.
+fn orchestrator_command(repo: &Path) -> Command {
+    match crate::core::bootstrap::orchestrator_path() {
+        Some(bin) => {
+            let mut c = Command::new(bin);
+            c.current_dir(repo);
+            c
+        }
+        None => {
+            let mut c = Command::new("cargo");
+            c.current_dir(repo)
+                .args(["run", "--quiet", "-p", "mb64-build", "--"]);
+            c
+        }
+    }
+}
+
+/// Spawn a configured command with piped stdout+stderr merged into a single line
+/// stream. Shared by the build orchestrator and the source-bootstrap (git) steps
+/// so they show progress and complete through the same poll loop.
+pub fn spawn_streamed(mut cmd: Command) -> Result<Build> {
+    let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| "spawning `cargo run -p mb64-build`")?;
+        .with_context(|| "spawning child process")?;
 
     let (tx, rx) = mpsc::channel::<String>();
     if let Some(out) = child.stdout.take() {

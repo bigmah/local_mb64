@@ -37,7 +37,20 @@ pub fn find_repo_root() -> Option<PathBuf> {
     None
 }
 
-/// Default path to the built game executable, given the repo root.
+/// Where a downloaded launcher clones the source it builds from. The launcher
+/// ships no game source, so on first run it provisions a checkout here.
+pub fn default_source_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    home.join(".mb64/src")
+}
+
+/// The active source tree: the dev checkout if we're running from inside one,
+/// otherwise the configured location (where the launcher clones it).
+pub fn resolve_source(configured: &Path) -> PathBuf {
+    find_repo_root().unwrap_or_else(|| configured.to_path_buf())
+}
+
+/// Default path to the built game executable, given the repo/source root.
 pub fn default_game_binary(repo: &Path) -> PathBuf {
     repo.join("app/build/mario_builder_64")
 }

@@ -25,6 +25,11 @@ impl Default for WindowSettings {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
+    /// The source tree the launcher builds from. In a dev checkout this is the
+    /// repo root; in a downloaded `.app` it's where the launcher clones the source
+    /// (see `paths::default_source_dir`).
+    #[serde(default = "default_source_field")]
+    pub source_dir: PathBuf,
     /// Path to the built `mario_builder_64` executable.
     pub game_binary: PathBuf,
     /// The game's working directory (where its ROM, SD card, and saves live).
@@ -35,14 +40,21 @@ pub struct Settings {
     pub window: WindowSettings,
 }
 
+/// serde default for `source_dir` so settings written before this field existed
+/// still load (the dev checkout if present, else the clone location).
+fn default_source_field() -> PathBuf {
+    paths::resolve_source(&paths::default_source_dir())
+}
+
 impl Settings {
-    /// Defaults derived from the repo layout (falls back to the current dir if the
-    /// repo root can't be found, e.g. a packaged build).
+    /// Defaults derived from the active source tree: the dev checkout if we're
+    /// inside one, otherwise the location the launcher will clone the source into.
     pub fn defaults() -> Self {
-        let repo = paths::find_repo_root().unwrap_or_else(|| PathBuf::from("."));
+        let source = paths::resolve_source(&paths::default_source_dir());
         Settings {
-            game_binary: paths::default_game_binary(&repo),
-            data_dir: paths::default_data_dir(&repo),
+            game_binary: paths::default_game_binary(&source),
+            data_dir: paths::default_data_dir(&source),
+            source_dir: source,
             rom_source: None,
             window: WindowSettings::default(),
         }
