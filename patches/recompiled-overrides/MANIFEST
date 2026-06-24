@@ -6,3 +6,4 @@ cart_card_init	funcs_14.c	funcs_13.c	5
 cart_init	funcs_16.c	funcs_16.c	7
 osContGetReadDataEx	funcs_28.c	funcs_28.c	561
 cart_card_wr_dram	funcs_30.c	funcs_29.c	6
+detect_emulator	funcs_25.c	funcs_25.c	451
