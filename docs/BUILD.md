@@ -113,7 +113,7 @@ Local patches under `patches/` are applied automatically at the right stage
 
 Users install with:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash
 ```
 `install.sh` downloads the prebuilt binaries from the latest release, assembles
 `Mario Builder 64 Launcher.app` (both binaries side by side in `Contents/MacOS/`, so

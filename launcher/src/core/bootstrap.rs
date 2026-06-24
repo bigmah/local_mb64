@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The public source repo the launcher clones (HTTPS so no SSH keys are needed).
-pub const SOURCE_URL: &str = "https://github.com/bigmah/mb64_mac.git";
+pub const SOURCE_URL: &str = "https://github.com/bigmah/local_mb64.git";
 
 /// The exact source ref to check out. CI stamps the release's git SHA in via
 /// `MB64_SOURCE_REF` so the bundled `mb64-build` always matches the cloned tree;

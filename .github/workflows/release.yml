@@ -65,7 +65,7 @@ jobs:
 
             **Install (no download prompts, nothing to sign around):**
             ```sh
-            curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash
             ```
 
             **This release contains no game or ROM** — only our launcher +

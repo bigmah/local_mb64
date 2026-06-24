@@ -48,7 +48,7 @@ prebuilt app binaries are distributed. See [docs/LEGAL.md](docs/LEGAL.md).
 ## Install (one command)
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash
 ```
 
 This downloads the **prebuilt** launcher, installs it into your Applications folder,
@@ -83,8 +83,8 @@ compiles a MIPS toolchain and can take a while.
 
 ```bash
 # 1. Clone WITH submodules (the game, runtime, renderer, and UI libraries)
-git clone --recurse-submodules https://github.com/bigmah/mb64_mac.git
-cd mb64_mac
+git clone --recurse-submodules https://github.com/bigmah/local_mb64.git
+cd local_mb64
 #    (already cloned without --recurse-submodules? run:)
 git submodule update --init --recursive
 
