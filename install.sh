@@ -2,7 +2,7 @@
 #
 # Mario Builder 64 — macOS installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/bigmah/mb64_mac/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash
 #
 # Downloads the prebuilt launcher and installs it as an app. NOTHING is compiled
 # here and no ROM or game data is downloaded — you supply your own ROM inside the
@@ -14,7 +14,7 @@
 # prompt.
 set -euo pipefail
 
-REPO="bigmah/mb64_mac"
+REPO="bigmah/local_mb64"
 ASSET="mb64-macos-arm64.tar.gz"
 APP_NAME="Mario Builder 64 Launcher"
 
