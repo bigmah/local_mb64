@@ -13,6 +13,7 @@
 //! loop), which the launcher spawns, monitors, and can stop. The raw build/clone
 //! log is tucked behind a "Show build details" disclosure.
 
+mod browse;
 mod core;
 
 use crate::core::bootstrap::{self, Prereqs, SourceStatus, PREREQS};
@@ -40,6 +41,15 @@ fn main() {
         .with_inner_size(LogicalSize::new(640.0, 720.0));
     let cfg = Config::new().with_window(window);
     dioxus::LaunchBuilder::new().with_cfg(cfg).launch(App);
+}
+
+/// Which top-level screen is showing.
+#[derive(Clone, Copy, PartialEq)]
+enum View {
+    /// The launcher home (setup / build / play).
+    Home,
+    /// Browse + download community levels from LevelShareSquare.
+    Browse,
 }
 
 /// Lifecycle of the spawned game process, for the UI.
@@ -177,6 +187,7 @@ fn App() -> Element {
     let mut rom_status = use_signal(|| rom::data_dir_rom_status(&Settings::load().data_dir));
     let mut game_status = use_signal(|| GameStatus::Idle);
     let mut notice = use_signal(|| Option::<String>::None);
+    let mut view = use_signal(|| View::Home);
 
     // Bootstrap + build state.
     let mut base_rom_ok =
@@ -491,9 +502,13 @@ fn App() -> Element {
         });
     };
 
-    let on_play = {
+    // Launch the game (used by the home Play button and the Browse view). Shared
+    // as a Callback so both call sites run the same preflight + spawn.
+    let play_game = {
         let proc = proc.clone();
-        move |_| {
+        use_callback(move |_: ()| {
+            let mut game_status = game_status;
+            let mut notice = notice;
             let s = settings.read().clone();
             match game::preflight(&s) {
                 Preflight::Ok => match game::spawn(&s) {
@@ -515,7 +530,7 @@ fn App() -> Element {
                     notice.set(Some("The ROM in the data folder is invalid — re-add it.".into()))
                 }
             }
-        }
+        })
     };
 
     let on_stop = move |_| {
@@ -535,11 +550,24 @@ fn App() -> Element {
     rsx! {
         style { dangerous_inner_html: APP_CSS }
         div { class: "app",
+        if view() == View::Browse {
+            browse::BrowseLevels {
+                data_dir: s.data_dir.clone(),
+                running,
+                on_play: move |_| play_game.call(()),
+                on_back: move |_| view.set(View::Home),
+            }
+        } else {
             header { class: "hero",
                 div { class: "logo", "MB" }
-                div {
+                div { class: "hero-text",
                     h1 { "Mario Builder 64" }
                     p { class: "subtitle", "macOS native launcher" }
+                }
+                button {
+                    class: "btn ghost browse-entry",
+                    onclick: move |_| view.set(View::Browse),
+                    "🌐  Browse levels"
                 }
             }
 
@@ -588,7 +616,7 @@ fn App() -> Element {
                         div { class: "big-check", "✓" }
                         h2 { "Ready to play" }
                         p { class: "muted", "Your ROM is verified and the game is built." }
-                        button { class: "btn play-btn", onclick: on_play, "▶  Play" }
+                        button { class: "btn play-btn", onclick: move |_| play_game.call(()), "▶  Play" }
                         if let Some(note) = run_note {
                             p { class: "muted small", "{note}" }
                         }
@@ -804,6 +832,7 @@ fn App() -> Element {
                     }
                 }
             }
+        }
         }
     }
 }

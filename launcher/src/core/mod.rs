@@ -5,6 +5,8 @@
 pub mod bootstrap;
 pub mod build;
 pub mod game;
+pub mod levels;
 pub mod paths;
 pub mod rom;
+pub mod sdcard;
 pub mod settings;

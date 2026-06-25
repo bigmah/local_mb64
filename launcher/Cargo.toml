@@ -40,3 +40,18 @@ futures-timer = "3"
 # SIGTERM the game on Stop (std's Child::kill is SIGKILL; SIGTERM lets the game's
 # SDL_QUIT handler flush + quick_exit cleanly).
 libc = "0.2"
+
+# Browse + download community levels from LevelShareSquare (its public JSON API).
+# rustls (already in the tree via Dioxus) keeps us off an OpenSSL/native-tls build
+# dependency; default features are off so we don't pull native-tls.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# Inject downloaded .mb64 levels into the game's FAT16 virtual SD card image
+# (mb64_sd.img) so they appear in the in-game level browser. Default features give
+# us std + long-filename support (the levels dir + level names need LFN).
+fatfs = "0.3"
+
+[dev-dependencies]
+# Drive the async LSS client in the (opt-in, network) `live_api` test under the
+# same runtime kind Dioxus desktop uses.
+tokio = { version = "1", features = ["rt", "macros"] }
