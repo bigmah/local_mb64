@@ -1,60 +1,31 @@
 <p align="center">
-  <img src="launcher/assets/logo.png" width="150" alt="MB64 Launcher" />
+  <img src="launcher/assets/logo.png" width="160" alt="Mario Builder 64 launcher logo" />
 </p>
 
-<h1 align="center">Mario Builder 64 — native macOS port</h1>
+<h1 align="center">Mario Builder 64 on macOS</h1>
 
 <p align="center">
-  A <strong>standalone native macOS app</strong> that plays
-  <a href="https://github.com/arthurtilly/Mario-Builder-64">Mario Builder 64</a> —
-  arthurtilly's Super Mario 64 ROM hack with a full in-game level editor — on Apple
-  Silicon. <strong>Not</strong> an emulator, not "load a <code>.z64</code> into
-  mupen64". A real app you double-click.
+  Bring your own US Super Mario 64 ROM and play
+  <a href="https://github.com/arthurtilly/Mario-Builder-64"><strong>Mario Builder 64</strong></a> —
+  arthurtilly's Super Mario 64 hack with a full in-game level editor — as a real,
+  double-clickable <strong>native macOS app</strong> on Apple Silicon.
+  <strong>No emulator. No ROM patching. No fiddling.</strong>
+  Install it, point it at your ROM, and play.
+</p>
+
+<p align="center">
+  You can also <strong>browse and download community levels</strong> right inside the app,
+  straight from <a href="https://levelsharesquare.com">Level Share Square</a> — the
+  community hub where Mario Builder 64 creators share their levels.
 </p>
 
 <p align="center">
   <code>curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash</code>
 </p>
 
-> **Status: early / in active bring-up.** This repo currently contains the project
-> scaffold, vendored sources, and tooling. It does not yet produce a playable build.
-> See [docs/BUILD.md](docs/BUILD.md) for the current milestone state.
-
-## Approach
-
-Mario Builder 64 is a pure **N64-target** decompilation (built on the
-HackerSM64 lineage) with no existing PC build path. Rather than hand-porting a
-platform layer onto a heavily-diverged engine, this project uses **static
-recompilation** via [N64: Recompiled](https://github.com/N64Recomp/N64Recomp) —
-the same technology behind the standalone *Majora's Mask Recompiled* app:
-
-```
-your US SM64 ROM ─┐
-                  ├─► build mb64.elf + mb64.z64 (decomp build, MIPS toolchain)
-HackerSM64/MB64 ──┘            │
-                              ▼
-                  N64Recomp (mb64.elf → C)  +  RSPRecomp (audio microcode)
-                              │
-                              ▼
-            N64ModernRuntime (libultra reimpl) + RT64 (Vulkan→MoltenVK)
-                              │
-                              ▼
-                   MarioBuilder64.app  (native macOS, Apple Silicon)
-```
-
-The recompiled game code and the RT64 renderer / runtime are existing C/C++
-projects we *use*. The **new code written for this project is in Rust**: the
-**Dioxus launcher** (ROM provisioning, settings, controller config, launch) and
-the build-orchestration **tooling**.
-
-## You must supply your own ROM
-
-This project bundles **zero Nintendo assets**. Building requires a legally-owned
-**US Super Mario 64 ROM** (`baserom.us.z64`, big-endian, SHA-1
-`9bef1128717f958171a4afac3ed78ee2bb4e86ce`), used at build time only to extract
-the game's media. This is a **source-available** project: you build it yourself
-and bring your own ROM. No ROMs, extracted assets, recompiled game code, or
-prebuilt app binaries are distributed. See [docs/LEGAL.md](docs/LEGAL.md).
+<p align="center">
+  <img src="screenshot.png" width="760" alt="The Mario Builder 64 launcher" />
+</p>
 
 ## Install (one command)
 
@@ -75,7 +46,9 @@ downloaded** — only our own launcher + build tooling. You add your own ROM in 
 Then, in the app: **Set up** (it checks for Apple's Command Line Tools + Homebrew,
 offering to install anything missing, then clones this open-source project) → **Add
 your ROM** (your own US SM64 `.z64`) → it builds itself → **Play**. The first build
-compiles a MIPS toolchain and can take a while.
+compiles a MIPS toolchain and can take a while. From there you can **Browse levels** to
+pull community creations from [Level Share Square](https://levelsharesquare.com)
+straight into the game.
 
 ## Layout
 
@@ -88,7 +61,7 @@ compiles a MIPS toolchain and can take a while.
 | `launcher/` | Rust + Dioxus launcher app |
 | `tools/` | Rust build-orchestration tooling |
 | `patches/` | local patches applied to dependencies at build time |
-| `docs/` | Architecture, build, and legal notes |
+| `docs/` | Architecture and legal notes |
 
 ## Building from source
 
@@ -121,10 +94,17 @@ fix before the app build; the decomp IPA-clone CFLAGS fix before `make`). The MI
 cross toolchain is built from source on demand — never committed — into a persistent
 per-user location the orchestrator and launcher auto-detect.
 
+## How it works
+
+This project turns a pure **N64-target** decompilation into a native Mac app using
+**static recompilation** ([N64: Recompiled](https://github.com/N64Recomp/N64Recomp)) —
+the same technology behind the standalone *Majora's Mask Recompiled* app — paired with
+the RT64 renderer and a Rust + Dioxus launcher. For the full pipeline and where the
+Rust code fits, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Docs
 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the recompilation pipeline and where Rust fits
-- [docs/BUILD.md](docs/BUILD.md) — toolchain, dependencies, and milestone status
 - [docs/LEGAL.md](docs/LEGAL.md) — ROM/asset/licensing posture
 
 ## Credits & acknowledgements
@@ -141,6 +121,14 @@ by other people — huge thanks to all of them.
   project plays. Vendored as a git submodule (`vendor/Mario-Builder-64`).
 - [**HackerSM64**](https://github.com/HackerN64/HackerSM64) — the modernized SM64
   decompilation base that Mario Builder 64 is built on.
+
+**Community levels**
+
+- [**Level Share Square**](https://levelsharesquare.com) — the community site where
+  Mario Builder 64 creators publish and share their levels. The in-app **Browse levels**
+  feature reads from LSS's public API so you can download community levels straight into
+  the game. All level content belongs to its respective creators; please support them
+  on the site.
 
 **The recompilation + runtime stack** (the *Majora's Mask Recompiled* technology
 that lets an N64 ROM run as a native program)

@@ -2,8 +2,8 @@
 
 This is a **source-available** project, published under the same well-established
 conventions as the SM64 decompilation, the SM64 PC port, and the *N64: Recompiled*
-family (Zelda64Recomp, drmario64_recomp). We publish **source you build yourself** —
-never game code, assets, ROMs, or prebuilt binaries.
+family (Zelda64Recomp, drmario64_recomp). We publish **source you build yourself**,
+plus our own launcher and build tooling — never game code, assets, or ROMs.
 
 ## You supply your own ROM. We ship no Nintendo content.
 
@@ -37,18 +37,18 @@ never game code, assets, ROMs, or prebuilt binaries.
 ## What we publish — and what we never publish
 
 **Published (source-available, GPLv3):** the native glue code, the recomp
-configuration (`recomp/*.toml`), the Rust launcher and build tooling, the docs,
-and **submodule pointers** to the game and the runtime/renderer libraries.
+configuration (`recomp/*.toml`), the Rust launcher and build tooling — including a
+**prebuilt launcher binary** (it contains no Nintendo content and no game data; it
+only provisions a build and launches the game you build locally) — the docs, and
+**submodule pointers** to the game and the runtime/renderer libraries.
 
 **Never published / never distributed** — and blocked by `.gitignore`:
 
 - any **ROM** (`*.z64`, `baserom*`) or **assets extracted** from one;
 - the **recompiled game C** output (`RecompiledFuncs/`) — it is derived from
-  Nintendo/MB64 code and is regenerated locally from *your* ROM at build time;
-- **prebuilt application binaries** / `.app` bundles — a built app embeds extracted
-  Nintendo assets plus the recompiled game code, so releasing one would redistribute
-  content we have no right to. **Builds are for personal use; do not share them.**
+  Nintendo/MB64 code and is regenerated locally from *your* ROM at build time.
 
-In short: sharing the **recipe** is fine; sharing the **cooked dish** (a built app,
-the ROM, or extracted assets) is not. This is the same line every reputable
-decomp/recomp project draws. Not affiliated with or endorsed by Nintendo.
+In short: sharing the **recipe** (and our own launcher, which carries no Nintendo
+content) is fine; sharing the **ROM or assets extracted from it** is not. This is the
+same line every reputable decomp/recomp project draws. Not affiliated with or endorsed
+by Nintendo.
