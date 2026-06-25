@@ -1,9 +1,20 @@
-# Mario Builder 64 — native macOS port
+<p align="center">
+  <img src="launcher/assets/logo.png" width="150" alt="MB64 Launcher" />
+</p>
 
-A project to build a **standalone native macOS application** that plays
-[Mario Builder 64](https://github.com/arthurtilly/Mario-Builder-64) (arthurtilly's
-Super Mario 64 ROM hack with a full in-game level editor) on Apple Silicon — **not**
-an emulator, and not "load a `.z64` into mupen64". A real app you double-click.
+<h1 align="center">Mario Builder 64 — native macOS port</h1>
+
+<p align="center">
+  A <strong>standalone native macOS app</strong> that plays
+  <a href="https://github.com/arthurtilly/Mario-Builder-64">Mario Builder 64</a> —
+  arthurtilly's Super Mario 64 ROM hack with a full in-game level editor — on Apple
+  Silicon. <strong>Not</strong> an emulator, not "load a <code>.z64</code> into
+  mupen64". A real app you double-click.
+</p>
+
+<p align="center">
+  <code>curl -fsSL https://raw.githubusercontent.com/bigmah/local_mb64/main/install.sh | bash</code>
+</p>
 
 > **Status: early / in active bring-up.** This repo currently contains the project
 > scaffold, vendored sources, and tooling. It does not yet produce a playable build.

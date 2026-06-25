@@ -27,11 +27,9 @@ html, body {
 /* Header */
 .hero { display: flex; align-items: center; gap: 14px; }
 .logo {
-  width: 46px; height: 46px; border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff; font-weight: 800; font-size: 18px;
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 4px 14px rgba(230, 0, 18, 0.35);
+  width: 50px; height: 50px; border-radius: 11px;
+  display: block; object-fit: contain;
+  box-shadow: 0 4px 14px rgba(230, 0, 18, 0.28);
 }
 .hero h1 { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; }
 .subtitle { color: var(--muted); font-size: 12px; margin-top: 2px; }

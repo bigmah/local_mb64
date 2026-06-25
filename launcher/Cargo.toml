@@ -22,6 +22,11 @@ rfd = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Embed the launcher logo as a data URI in the WebView (the desktop renderer has
+# no asset pipeline under plain `cargo run`, and we don't ship `dx`). Already in
+# the tree transitively, so this adds no new download.
+base64 = "0.22"
+
 # ROM verification: librecomp validates the provisioned ROM with XXH3_64bits over the
 # (4-byte-padded, byteswap-normalized) ROM and compares to the GameEntry.rom_hash. We
 # replicate that here so the launcher's "valid ROM" verdict matches the game's exactly.

@@ -20,7 +20,10 @@ cp target/release/mb64-launcher "$STAGE/mb64-launcher"
 cp target/release/mb64-build    "$STAGE/mb64-build"
 chmod +x "$STAGE/mb64-launcher" "$STAGE/mb64-build"
 
-tar -C "$STAGE" -czf "$DIST/$ASSET" mb64-launcher mb64-build
+# App-bundle icon, placed into Contents/Resources by install.sh.
+cp launcher/assets/AppIcon.icns "$STAGE/AppIcon.icns"
+
+tar -C "$STAGE" -czf "$DIST/$ASSET" mb64-launcher mb64-build AppIcon.icns
 rm -rf "$STAGE"
 
 ( cd "$DIST" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )

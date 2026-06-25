@@ -12,6 +12,9 @@ roms/
 **/assets/**/*.png
 **/assets/**/*.aiff
 **/sound/samples/
+# ...but DO track the launcher's own branding (we authored it; it's baked into the
+# binary and shipped as the app icon — not extracted from any ROM).
+!launcher/assets/logo.png
 build/
 
 # ── Rust ──────────────────────────────────────────────────────────────────────

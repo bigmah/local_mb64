@@ -69,6 +69,15 @@ cp "$WORK/mb64-launcher" "$APP/Contents/MacOS/mb64-launcher"
 cp "$WORK/mb64-build"    "$APP/Contents/MacOS/mb64-build"
 chmod +x "$APP/Contents/MacOS/mb64-launcher" "$APP/Contents/MacOS/mb64-build"
 
+# App icon (optional — only tarballs that ship one have it). When present, drop it
+# into Resources and point Info.plist at it; otherwise the app keeps the generic icon.
+ICON_PLIST=""
+if [ -f "$WORK/AppIcon.icns" ]; then
+  mkdir -p "$APP/Contents/Resources"
+  cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+  ICON_PLIST=$'\n  <key>CFBundleIconFile</key><string>AppIcon</string>'
+fi
+
 VER="${MB64_VERSION:-}"; VER="${VER#v}"; VER="${VER:-1.0}"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -83,7 +92,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleShortVersionString</key><string>$VER</string>
   <key>CFBundleVersion</key><string>$VER</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
-  <key>NSHighResolutionCapable</key><true/>
+  <key>NSHighResolutionCapable</key><true/>$ICON_PLIST
 </dict>
 </plist>
 PLIST

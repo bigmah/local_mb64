@@ -29,10 +29,23 @@ use dioxus::prelude::*;
 
 use std::path::Path;
 use std::process::Child;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, LazyLock};
 use std::time::Duration;
 
 const APP_CSS: &str = include_str!("app.css");
+
+/// The launcher logo (256px, transparent rounded corners), baked into the binary.
+const LOGO_PNG: &[u8] = include_bytes!("../assets/logo.png");
+
+/// `LOGO_PNG` as a `data:` URI the WebView's `<img>` can load directly. Encoded
+/// once on first use (the WebView can't reach a file path; there's no asset host).
+static LOGO_URI: LazyLock<String> = LazyLock::new(|| {
+    use base64::Engine;
+    format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(LOGO_PNG)
+    )
+});
 
 fn main() {
     let window = WindowBuilder::new()
@@ -559,7 +572,7 @@ fn App() -> Element {
             }
         } else {
             header { class: "hero",
-                div { class: "logo", "MB" }
+                img { class: "logo", src: LOGO_URI.as_str(), alt: "MB64 Launcher" }
                 div { class: "hero-text",
                     h1 { "Mario Builder 64" }
                     p { class: "subtitle", "macOS native launcher" }
