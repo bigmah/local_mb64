@@ -40,6 +40,7 @@ pub fn spawn(settings: &Settings) -> anyhow::Result<Child> {
         .env("MB64_WINDOW_WIDTH", w.width.to_string())
         .env("MB64_WINDOW_HEIGHT", w.height.to_string())
         .env("MB64_FULLSCREEN", if w.fullscreen { "1" } else { "0" })
+        .env("MB64_RES_SCALE", w.res_scale.to_string())
         .spawn()?;
     Ok(child)
 }

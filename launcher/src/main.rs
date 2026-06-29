@@ -826,6 +826,30 @@ fn App() -> Element {
                                 "Fullscreen"
                             }
                         }
+                        div { class: "row",
+                            label { "Resolution"
+                                select {
+                                    class: "res-select",
+                                    disabled: running,
+                                    onchange: move |e| {
+                                        if let Ok(v) = e.value().parse::<u32>() {
+                                            settings.write().window.res_scale = v;
+                                            let _ = settings.read().save();
+                                        }
+                                    },
+                                    option { value: "0", selected: s.window.res_scale == 0, "Match window (sharp)" }
+                                    option { value: "1", selected: s.window.res_scale == 1, "Native · 240p" }
+                                    option { value: "2", selected: s.window.res_scale == 2, "2× · 480p" }
+                                    option { value: "3", selected: s.window.res_scale == 3, "3× · 720p" }
+                                    option { value: "4", selected: s.window.res_scale == 4, "4× · 960p" }
+                                    option { value: "6", selected: s.window.res_scale == 6, "6× · 1440p" }
+                                    option { value: "8", selected: s.window.res_scale == 8, "8× · 1920p" }
+                                }
+                            }
+                        }
+                        p { class: "muted small",
+                            "Upscales the game above its original 240p — higher is sharper but heavier. “Match window” renders crisply at your window size."
+                        }
                     }
                 }
             }

@@ -119,21 +119,30 @@ RT64::UserConfiguration::InternalColorFormat to_rt64(ultramodern::renderer::High
 }
 
 void set_application_user_config(RT64::Application* application, const ultramodern::renderer::GraphicsConfig& config) {
+    // Resolution upscaling. The launcher drives this via MB64_RES_SCALE (see
+    // mb64_main.cpp), which maps to res_option/ds_option here. downsampleMultiplier
+    // stays at 1 in every case: we want a genuine internal-resolution increase the
+    // game is rendered at, not supersampling that gets shrunk back to native.
     switch (config.res_option) {
         default:
         case ultramodern::renderer::Resolution::Auto:
+            // "Match window": render at the largest integer multiple of native
+            // 240p that fills the output, so the image stays crisp at any window
+            // size (and sharper still on high-DPI displays).
             application->userConfig.resolution = RT64::UserConfiguration::Resolution::WindowIntegerScale;
             application->userConfig.downsampleMultiplier = 1;
             break;
         case ultramodern::renderer::Resolution::Original:
+            // Fixed internal resolution: ds_option × native 240p (1 = 240p,
+            // 2 = 480p, 3 = 720p, 4 = 960p, …), then upscaled to the window.
             application->userConfig.resolution = RT64::UserConfiguration::Resolution::Manual;
             application->userConfig.resolutionMultiplier = std::max(config.ds_option, 1);
-            application->userConfig.downsampleMultiplier = std::max(config.ds_option, 1);
+            application->userConfig.downsampleMultiplier = 1;
             break;
         case ultramodern::renderer::Resolution::Original2x:
             application->userConfig.resolution = RT64::UserConfiguration::Resolution::Manual;
             application->userConfig.resolutionMultiplier = 2.0 * std::max(config.ds_option, 1);
-            application->userConfig.downsampleMultiplier = std::max(config.ds_option, 1);
+            application->userConfig.downsampleMultiplier = 1;
             break;
     }
 

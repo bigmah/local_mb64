@@ -93,6 +93,21 @@ static bool env_fullscreen() {
     return v != nullptr && (v[0] == '1' || v[0] == 't' || v[0] == 'T' || v[0] == 'y' || v[0] == 'Y');
 }
 
+// Resolution upscaling factor the launcher requests via MB64_RES_SCALE:
+//   0  → match the window (RT64 renders at an integer multiple of native 240p
+//        that fills the output — sharp at any window size)
+//   N  → a fixed multiple of native 240p (1 = native 240p, 2 = 480p, 4 = 960p, …)
+// Absent/invalid falls back to native 1x, so running the binary by hand keeps the
+// historical look. Capped at RT64's resolutionMultiplier limit (32).
+static int env_res_scale() {
+    const char* v = getenv("MB64_RES_SCALE");
+    if (v == nullptr || v[0] == '\0') return 1;
+    char* end = nullptr;
+    long parsed = strtol(v, &end, 10);
+    if (end == v || parsed < 0 || parsed > 32) return 1;
+    return (int)parsed;
+}
+
 static ultramodern::renderer::WindowHandle create_window(ultramodern::gfx_callbacks_t::gfx_data_t) {
     const int width = env_window_dim("MB64_WINDOW_WIDTH", 1600);
     const int height = env_window_dim("MB64_WINDOW_HEIGHT", 960);
@@ -236,13 +251,26 @@ int main(int, char**) {
         fprintf(stdout, "Provisioned Mario Builder 64 ROM into the config path.\n");
     }
 
-    // Keep RT64's notion of fullscreen consistent with the SDL window flag the
-    // launcher requested: RT64 reads wm_option from the graphics config at startup
-    // (app->setFullScreen(wm_option == Fullscreen)). Every other field stays at the
-    // default the game has always run with; only the window mode is flipped.
-    if (env_fullscreen()) {
+    // Seed the graphics config the RT64 integration reads at startup (window mode
+    // in mb64_main's create_window expectations; resolution + downsampling in
+    // set_application_user_config). The game ships no in-engine settings UI, so
+    // this in-memory config is the single source of truth — nothing is persisted.
+    // All fields a fresh GraphicsConfig{} doesn't touch stay at the historical
+    // default, so an unconfigured launch (no env vars) is unchanged.
+    {
         ultramodern::renderer::GraphicsConfig gfx_cfg{};
-        gfx_cfg.wm_option = ultramodern::renderer::WindowMode::Fullscreen;
+        gfx_cfg.wm_option = env_fullscreen()
+            ? ultramodern::renderer::WindowMode::Fullscreen
+            : ultramodern::renderer::WindowMode::Windowed;
+        const int res_scale = env_res_scale();
+        if (res_scale <= 0) {
+            // Match the window (integer-scaled to fill it).
+            gfx_cfg.res_option = ultramodern::renderer::Resolution::Auto;
+        } else {
+            // Fixed multiple of native 240p.
+            gfx_cfg.res_option = ultramodern::renderer::Resolution::Original;
+            gfx_cfg.ds_option = res_scale;
+        }
         ultramodern::renderer::set_graphics_config(gfx_cfg);
     }
 

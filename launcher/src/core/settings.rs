@@ -14,12 +14,24 @@ pub struct WindowSettings {
     pub width: u32,
     pub height: u32,
     pub fullscreen: bool,
+    /// Internal render resolution the game upscales from, passed as `MB64_RES_SCALE`.
+    /// `0` = match the window (sharp at any size); `N` = a fixed multiple of native
+    /// 240p (1 = 240p, 2 = 480p, 3 = 720p, 4 = 960p, …). Defaulted so settings files
+    /// written before this field existed still load.
+    #[serde(default = "default_res_scale")]
+    pub res_scale: u32,
+}
+
+/// serde default + the shipped default: match the window, which is a strict upgrade
+/// over the game's historical native-240p internal resolution.
+fn default_res_scale() -> u32 {
+    0
 }
 
 impl Default for WindowSettings {
     fn default() -> Self {
         // Matches the hardcoded SDL_CreateWindow size in mb64_main.cpp.
-        WindowSettings { width: 1600, height: 960, fullscreen: false }
+        WindowSettings { width: 1600, height: 960, fullscreen: false, res_scale: default_res_scale() }
     }
 }
 
